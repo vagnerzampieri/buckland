@@ -158,12 +158,14 @@ CREATE TABLE time_entries (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Single-active-timer invariant. Indexes the NOT NULL column
--- (`started_at`) filtered to active rows, avoiding any confusion
--- about NULL distinctness that a `(ended_at) WHERE ended_at IS NULL`
--- index would raise.
+-- Single-active-timer invariant. Unique index on the constant
+-- expression `(1)` filtered to active rows: any two active rows
+-- collide on the same indexed value, so SQLite enforces at most
+-- one row with `ended_at IS NULL`. Indexing an expression
+-- sidesteps any NULL-distinctness ambiguity a
+-- `(ended_at) WHERE ended_at IS NULL` index would raise.
 CREATE UNIQUE INDEX idx_single_active
-  ON time_entries(started_at)
+  ON time_entries((1))
   WHERE ended_at IS NULL;
 
 CREATE TABLE shortcut_stories (

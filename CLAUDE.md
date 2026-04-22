@@ -18,7 +18,7 @@ Read-only. `shortcut::Client::fetch_story(id)` hits `https://api.app.shortcut.co
 
 ### Timer Invariant
 
-At most one row in `time_entries` with `ended_at IS NULL`. Enforced both at the schema level (partial unique index on `started_at` WHERE `ended_at IS NULL` — on the non-null column, sidestepping NULL-distinctness ambiguity) and at the code level in `TimerOps::start`, which stops the active entry inside the same transaction before creating the new one.
+At most one row in `time_entries` with `ended_at IS NULL`. Enforced both at the schema level (partial unique index on the constant expression `(1)` WHERE `ended_at IS NULL` — any two active rows collide on the same indexed value) and at the code level in `TimerOps::start`, which stops the active entry inside the same transaction before creating the new one.
 
 ## Core Philosophy
 
