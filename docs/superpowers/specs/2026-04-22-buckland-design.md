@@ -35,7 +35,7 @@ Alternatives like Hamster, Timewarrior, Watson, and ActivityWatch were considere
 - **Multi-user / multi-device sync.** Single user, single machine, no cloud back-end.
 - **Shortcut write-back.** v1 is read-only; users copy time totals into Shortcut manually. Revisit in v1.x based on real usage.
 - **macOS or Windows binaries.** The core library is portable; the tray is Linux-only via `ksni`. Cross-platform tray ships when someone asks for it.
-- **A web UI or any HTTP surface.** No Rails, no Tauri, no Electron, no local JSON API.
+- **A web UI or any HTTP surface.** No browser, no embedded framework, no local JSON API.
 - **Rich charts.** Reports render as Unicode-block bars sized to the terminal; anyone who wants a full dashboard can query the SQLite file or `bl report --json`.
 - **Pomodoro / parallel timers.** One active timer at a time; starting a new one stops the current one.
 - **Mouse interactions** in the TUI. Keyboard only in v1.
@@ -186,7 +186,7 @@ CREATE INDEX idx_time_entries_task_started
 ### Key decisions
 
 - **Storage** — datetimes written in UTC as ISO8601 (`rusqlite` default with `chrono` feature). Conversion to `Local` happens at the boundary (TUI display, agenda bucketing).
-- **Durations computed in Rust, not SQL.** `ended_at.unwrap_or_else(Utc::now) - started_at` returns a `chrono::Duration`. SQL aggregation (`SUM(COALESCE(...) - ...)`) is unreliable in SQLite and we don't need it — reports iterate a small row set and sum in Ruby... err, Rust.
+- **Durations computed in Rust, not SQL.** `ended_at.unwrap_or_else(Utc::now) - started_at` returns a `chrono::Duration`. SQL aggregation with `SUM(COALESCE(ended_at, CURRENT_TIMESTAMP) - started_at)` is unreliable in SQLite (datetimes are ISO8601 text and subtraction coerces the leading digits into nonsense). Reports iterate a small row set and sum in Rust, which is correct and obvious.
 - **Task destroy cascades are blocked.** `ON DELETE RESTRICT` on the FK means deleting a task with time entries errors out. `bl delete <id>` works only on empty tasks; otherwise use `bl archive <id>`. This prevents silently erasing months of history.
 - **"Pause" is stop + start.** Multiple `time_entries` per task over time; resuming creates a new entry. No `paused_at` or accumulation column. The report sums all entries for a task.
 - **Day bucketing uses `chrono::Local`.** "Today" is the user's local day, not UTC. DST transitions are handled by `chrono`.
