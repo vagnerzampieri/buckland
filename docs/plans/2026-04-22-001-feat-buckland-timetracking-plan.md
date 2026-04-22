@@ -1,10 +1,13 @@
 ---
 title: "feat: Buckland time-tracking — Rails core + Rust quick-access"
 type: feat
-status: active
+status: superseded
 date: 2026-04-22
+superseded_reason: "Stack pivot to all-Rust (TUI + tray + CLI); web UI and local HTTP API dropped. See CLAUDE.md for current direction; new plan to replace this document."
 origin: docs/claude/plan/buckland.md
 ---
+
+> **Superseded (2026-04-22):** After multi-persona document review and follow-up brainstorming, the project pivoted to an all-Rust stack (CLI + TUI + passive tray, single SQLite, no Rails, no web UI, no local HTTP). Kept in-tree for decision history. The current direction lives in `CLAUDE.md`; a replacement plan will live in `docs/plans/` once the design spec is approved.
 
 # Buckland time-tracking — Rails core + Rust quick-access
 
@@ -108,7 +111,6 @@ Greenfield — não há código pré-existente no repo. Padrões a seguir vêm d
 - **Formato exato dos relatórios** — quais agregações (por dia, semana, story, epic, projeto) e qual ordem de prioridade. A definir conforme o uso revelar necessidade.
 - **Nome exato dos endpoints JSON** — seguir REST Rails-like (`/api/time_entries`, `/api/tasks`); ajustes finos durante implementação.
 - **Tema do gtk-rs** — seguir Adwaita default; dark mode automático via sistema. Ajustes visuais a decidir quando o protótipo existir.
-- **Armazenamento do Shortcut Story data** — cache em tabela dedicada vs. fetch on-demand: decidir ao implementar a Unit 4 baseado em como o Shortcut API se comporta (rate limit, latência).
 
 ## Output Structure
 
@@ -398,6 +400,7 @@ Fluxo típico "iniciar timer via tray":
 
 **Approach:**
 - Agenda: timeline por dia (dia atual + 7 anteriores por padrão), cada dia listando tasks trabalhadas e duração somada. Navegação para semanas anteriores via link (`?week=2026-W16`).
+- Semântica de dia: uma entry que cruza meia-noite conta integralmente no dia do `started_at` (decisão explícita para simplificar o agrupamento — documentar também no teste correspondente).
 - Relatórios (v1 mínimo): totais por dia (últimos 30 dias, gráfico simples), totais por Shortcut story (top 10), totais por epic (via `shortcut_story.epic_name` quando disponível).
 - Cálculo de duração: `time_entries.sum("COALESCE(ended_at, CURRENT_TIMESTAMP) - started_at")` — entry ativa conta até agora.
 - Sem biblioteca de charting no v1 — tabelas + barras renderizadas com Tailwind (div com `bg-blue-500` e `style="width: X%"` para barras proporcionais). Adicionar chart.js ou similar em follow-up se necessidade real aparecer.
