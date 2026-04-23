@@ -4,9 +4,8 @@
 //! code. 0 = success; 1 = logical failure; other codes reserved.
 
 use crate::cli::context::Context;
-use crate::cli::format::duration_compact;
+use crate::domain::Task;
 use crate::storage::Repo;
-use chrono::Utc;
 
 pub fn add(ctx: &mut Context, title: &str, description: Option<&str>) -> anyhow::Result<i32> {
     let trimmed = title.trim();
@@ -18,23 +17,59 @@ pub fn add(ctx: &mut Context, title: &str, description: Option<&str>) -> anyhow:
     Ok(0)
 }
 
-pub fn list(
-    ctx: &mut Context,
-    _all: bool,
-    _archived: bool,
-    _completed: bool,
-) -> anyhow::Result<i32> {
-    let now = Utc::now();
-    let tasks = ctx.repo.list_open_tasks()?;
+pub fn list(ctx: &mut Context, all: bool, archived: bool, completed: bool) -> anyhow::Result<i32> {
+    let now = chrono::Utc::now();
+    let tasks: Vec<Task> = if all {
+        ctx.repo.list_all_tasks()?
+    } else if archived {
+        ctx.repo.list_archived_tasks()?
+    } else if completed {
+        ctx.repo.list_completed_tasks()?
+    } else {
+        ctx.repo.list_open_tasks()?
+    };
+
     if tasks.is_empty() {
-        println!("No open tasks. Use `bl add \"title\"` to create one.");
+        match (all, archived, completed) {
+            (true, _, _) => println!("No tasks at all. Use `bl add \"title\"`."),
+            (_, true, _) => println!("No archived tasks."),
+            (_, _, true) => println!("No completed tasks."),
+            _ => println!("No open tasks. Use `bl add \"title\"` to create one."),
+        }
         return Ok(0);
     }
+
     for t in tasks {
         let total = ctx.repo.task_total_duration(t.id, now)?;
-        println!("{:>4}  {}  ({})", t.id, t.title, duration_compact(total));
+        let status = status_glyph(&t);
+        println!(
+            "{status} {:>4}  {:<40}  {}",
+            t.id,
+            truncate(&t.title, 40),
+            crate::cli::format::duration_compact(total)
+        );
     }
     Ok(0)
+}
+
+fn status_glyph(t: &Task) -> &'static str {
+    if t.completed_at.is_some() {
+        "✓"
+    } else if t.archived_at.is_some() {
+        "·"
+    } else {
+        " "
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
 }
 
 pub fn start(_ctx: &mut Context, _target: &str) -> anyhow::Result<i32> {
