@@ -15,6 +15,7 @@ pub fn open(path: &Path) -> anyhow::Result<Connection> {
     }
     let mut conn = Connection::open(path)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "busy_timeout", 3000)?;
     migrate::run(&mut conn)?;
     Ok(conn)
 }
@@ -23,6 +24,7 @@ pub fn open(path: &Path) -> anyhow::Result<Connection> {
 pub fn open_memory() -> anyhow::Result<Connection> {
     let mut conn = Connection::open_in_memory()?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "busy_timeout", 3000)?;
     migrate::run(&mut conn)?;
     Ok(conn)
 }
