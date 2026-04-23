@@ -36,6 +36,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
