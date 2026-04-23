@@ -5,7 +5,7 @@ fn migrations() -> Migrations<'static> {
     Migrations::new(vec![M::up(include_str!("../../migrations/0001_init.sql"))])
 }
 
-pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
+pub(crate) fn run(conn: &mut Connection) -> anyhow::Result<()> {
     migrations().to_latest(conn)?;
     Ok(())
 }

@@ -29,20 +29,20 @@ fn migrations_create_expected_tables_and_indexes() {
 
 #[test]
 fn partial_unique_index_rejects_two_active_entries() {
-    let conn = storage::open_memory().unwrap();
+    let conn = storage::open_memory().expect("open in-memory DB with migrations");
 
     conn.execute(
         "INSERT INTO tasks (title, created_at, updated_at) \
          VALUES ('t', '2026-04-22 10:00:00', '2026-04-22 10:00:00')",
         [],
     )
-    .unwrap();
+    .expect("insert task");
 
     conn.execute(
         "INSERT INTO time_entries (task_id, started_at) VALUES (1, '2026-04-22 10:00:00')",
         [],
     )
-    .unwrap();
+    .expect("insert first active entry");
 
     let second = conn.execute(
         "INSERT INTO time_entries (task_id, started_at) VALUES (1, '2026-04-22 10:01:00')",
@@ -54,4 +54,31 @@ fn partial_unique_index_rejects_two_active_entries() {
         "expected UNIQUE constraint failure, got {:?}",
         second
     );
+}
+
+#[test]
+fn partial_unique_index_allows_sequential_entries() {
+    let conn = storage::open_memory().expect("open in-memory DB with migrations");
+
+    conn.execute(
+        "INSERT INTO tasks (title, created_at, updated_at) \
+         VALUES ('t', '2026-04-22 10:00:00', '2026-04-22 10:00:00')",
+        [],
+    )
+    .expect("insert task");
+
+    // Open an entry, close it, then open another — the index should allow this.
+    conn.execute(
+        "INSERT INTO time_entries (task_id, started_at, ended_at) \
+         VALUES (1, '2026-04-22 10:00:00', '2026-04-22 10:30:00')",
+        [],
+    )
+    .expect("insert first (closed) entry");
+
+    conn.execute(
+        "INSERT INTO time_entries (task_id, started_at) \
+         VALUES (1, '2026-04-22 10:30:00')",
+        [],
+    )
+    .expect("insert second (active) entry should be allowed");
 }
