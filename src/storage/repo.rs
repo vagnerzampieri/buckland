@@ -38,6 +38,9 @@ pub trait Repo {
         task_id: i64,
         started_at: DateTime<Utc>,
     ) -> RepoResult<TimeEntry>;
+    /// Ends the entry with the given `id`. Returns
+    /// [`RepoError::TimeEntryNotFound`] if no row matches the id OR if the
+    /// row exists but has already been ended.
     fn end_time_entry(&mut self, id: i64, ended_at: DateTime<Utc>) -> RepoResult<TimeEntry>;
     fn active_time_entry(&self) -> RepoResult<Option<TimeEntry>>;
     fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>>;
@@ -71,6 +74,8 @@ impl SqliteRepo {
 
 const TASK_COLS: &str =
     "id, title, description, shortcut_story_id, completed_at, archived_at, created_at, updated_at";
+
+const TIME_ENTRY_COLS: &str = "id, task_id, started_at, ended_at, notes, created_at";
 
 fn load_task(conn: &Connection, id: i64) -> RepoResult<Task> {
     conn.query_row(
@@ -185,8 +190,7 @@ impl Repo for SqliteRepo {
         let id = self.conn.last_insert_rowid();
         self.conn
             .query_row(
-                "SELECT id, task_id, started_at, ended_at, notes, created_at \
-                 FROM time_entries WHERE id = ?1",
+                &format!("SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE id = ?1"),
                 [id],
                 |row| TimeEntry::try_from(row),
             )
@@ -203,8 +207,7 @@ impl Repo for SqliteRepo {
         }
         self.conn
             .query_row(
-                "SELECT id, task_id, started_at, ended_at, notes, created_at \
-                 FROM time_entries WHERE id = ?1",
+                &format!("SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE id = ?1"),
                 [id],
                 |row| TimeEntry::try_from(row),
             )
@@ -214,8 +217,9 @@ impl Repo for SqliteRepo {
     fn active_time_entry(&self) -> RepoResult<Option<TimeEntry>> {
         self.conn
             .query_row(
-                "SELECT id, task_id, started_at, ended_at, notes, created_at \
-                 FROM time_entries WHERE ended_at IS NULL LIMIT 1",
+                &format!(
+                    "SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE ended_at IS NULL LIMIT 1"
+                ),
                 [],
                 |row| TimeEntry::try_from(row),
             )
@@ -224,10 +228,9 @@ impl Repo for SqliteRepo {
     }
 
     fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, task_id, started_at, ended_at, notes, created_at \
-             FROM time_entries WHERE task_id = ?1 ORDER BY started_at DESC",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE task_id = ?1 ORDER BY started_at DESC"
+        ))?;
         let rows = stmt.query_map([task_id], |row| TimeEntry::try_from(row))?;
         let mut out = Vec::new();
         for r in rows {

@@ -8,6 +8,7 @@ pub use repo::{Repo, RepoError, RepoResult, SqliteRepo};
 use rusqlite::Connection;
 use std::path::Path;
 
+/// Open a SQLite connection at `path`, apply migrations, and return it.
 pub fn open(path: &Path) -> anyhow::Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -18,6 +19,7 @@ pub fn open(path: &Path) -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
+/// Open an in-memory SQLite connection with migrations applied. Used in tests.
 pub fn open_memory() -> anyhow::Result<Connection> {
     let mut conn = Connection::open_in_memory()?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
