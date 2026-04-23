@@ -20,12 +20,7 @@ impl TimeEntry {
     /// bound. Never negative — clamped to zero if clock goes backward.
     pub fn duration(&self, now: DateTime<Utc>) -> Duration {
         let end = self.ended_at.unwrap_or(now);
-        let d = end - self.started_at;
-        if d < Duration::zero() {
-            Duration::zero()
-        } else {
-            d
-        }
+        (end - self.started_at).max(Duration::zero())
     }
 }
 

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::Row;
 
-const CACHE_TTL: Duration = Duration::hours(1);
+pub(crate) const CACHE_TTL: Duration = Duration::hours(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShortcutStory {
