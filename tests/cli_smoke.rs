@@ -12,7 +12,11 @@ fn help_shows_subcommands() {
         .stdout(contains("list"))
         .stdout(contains("start"))
         .stdout(contains("stop"))
-        .stdout(contains("status"));
+        .stdout(contains("pause"))
+        .stdout(contains("status"))
+        .stdout(contains("done"))
+        .stdout(contains("archive"))
+        .stdout(contains("delete"));
 }
 
 #[test]
