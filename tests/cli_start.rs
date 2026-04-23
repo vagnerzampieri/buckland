@@ -34,7 +34,41 @@ fn start_by_text_creates_and_starts() {
 #[test]
 fn start_missing_numeric_errors() {
     let home = TempDir::new().unwrap();
-    bl(&home).args(["start", "999"]).assert().failure();
+    bl(&home).args(["start", "999"]).assert().code(1);
+}
+
+#[test]
+fn start_missing_id_exits_one_not_two() {
+    let home = TempDir::new().unwrap();
+    bl(&home)
+        .args(["start", "999"])
+        .assert()
+        .code(1)
+        .stdout(contains("not found"));
+}
+
+#[test]
+fn start_on_completed_task_is_refused() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "t"]).assert().success();
+    bl(&home).args(["done", "1"]).assert().success();
+    bl(&home)
+        .args(["start", "1"])
+        .assert()
+        .code(1)
+        .stdout(contains("is done"));
+}
+
+#[test]
+fn start_on_archived_task_is_refused() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "t"]).assert().success();
+    bl(&home).args(["archive", "1"]).assert().success();
+    bl(&home)
+        .args(["start", "1"])
+        .assert()
+        .code(1)
+        .stdout(contains("is archived"));
 }
 
 #[test]

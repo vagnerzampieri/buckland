@@ -12,8 +12,9 @@ pub fn add(ctx: &mut Context, title: &str, description: Option<&str>) -> anyhow:
     if trimmed.is_empty() {
         anyhow::bail!("title cannot be empty");
     }
+    let description = description.map(|s| s.trim()).filter(|s| !s.is_empty());
     let task = ctx.repo.create_task(trimmed, description)?;
-    println!("Added task #{} — {}", task.id, task.title);
+    println!("Added: #{} {}", task.id, task.title);
     Ok(0)
 }
 
@@ -73,20 +74,50 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 pub fn start(ctx: &mut Context, target: &str) -> anyhow::Result<i32> {
-    let resolved = crate::cli::resolve::resolve_or_create(&mut ctx.repo, target)?;
-    let (task_id, task_title) = match resolved {
-        crate::cli::resolve::Resolved::Existing(id) => {
-            let t = ctx.repo.find_task(id)?.expect("resolved id");
-            (t.id, t.title)
+    use crate::cli::resolve::{resolve_or_create, ResolveError, Resolved};
+
+    let resolved = match resolve_or_create(&mut ctx.repo, target) {
+        Ok(r) => r,
+        Err(ResolveError::TaskNotFound(id)) => {
+            println!("Task #{id} not found.");
+            return Ok(1);
         }
-        crate::cli::resolve::Resolved::Created(t) => (t.id, t.title),
+        Err(ResolveError::EmptyTarget) => {
+            println!("start target cannot be empty");
+            return Ok(1);
+        }
+        Err(ResolveError::NonPositiveId) => {
+            println!("task id must be positive");
+            return Ok(1);
+        }
+        Err(ResolveError::Repo(e)) => return Err(e.into()),
     };
 
+    let task_id = match resolved {
+        Resolved::Existing(id) => id,
+        Resolved::Created(t) => t.id,
+    };
+
+    let task = ctx
+        .repo
+        .find_task(task_id)?
+        .ok_or_else(|| anyhow::anyhow!("internal: resolved task #{task_id} not found"))?;
+
+    if task.completed_at.is_some() {
+        println!("Task #{task_id} is done. Create a new task with `bl start \"<title>\"`.");
+        return Ok(1);
+    }
+    if task.archived_at.is_some() {
+        println!("Task #{task_id} is archived. Create a new task with `bl start \"<title>\"`.");
+        return Ok(1);
+    }
+
     let now = chrono::Utc::now();
-    let entry = TimerOps::new(&mut ctx.repo).start(task_id, now)?;
+    let entry = TimerOps::new(&mut ctx.repo).start(task.id, now)?;
     println!(
-        "Started #{task_id} {task_title} (entry {}, {})",
-        entry.id,
+        "Started: #{} {} ({})",
+        task.id,
+        task.title,
         entry
             .started_at
             .with_timezone(&chrono::Local)
@@ -99,10 +130,16 @@ pub fn stop(ctx: &mut Context) -> anyhow::Result<i32> {
     let now = chrono::Utc::now();
     match TimerOps::new(&mut ctx.repo).stop(now)? {
         Some(entry) => {
-            let task = ctx.repo.find_task(entry.task_id)?.expect("entry has task");
+            let task = ctx.repo.find_task(entry.task_id)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "internal: time entry #{} references missing task #{}",
+                    entry.id,
+                    entry.task_id
+                )
+            })?;
             let elapsed = entry.duration(now);
             println!(
-                "Stopped #{} {} ({})",
+                "Stopped: #{} {} ({})",
                 task.id,
                 task.title,
                 crate::cli::format::duration_hms(elapsed),
@@ -120,7 +157,13 @@ pub fn status(ctx: &mut Context) -> anyhow::Result<i32> {
     let now = chrono::Utc::now();
     match ctx.repo.active_time_entry()? {
         Some(entry) => {
-            let task = ctx.repo.find_task(entry.task_id)?.expect("entry has task");
+            let task = ctx.repo.find_task(entry.task_id)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "internal: time entry #{} references missing task #{}",
+                    entry.id,
+                    entry.task_id
+                )
+            })?;
             let elapsed = entry.duration(now);
             let started_local = entry.started_at.with_timezone(&chrono::Local);
             println!(
@@ -139,9 +182,19 @@ pub fn status(ctx: &mut Context) -> anyhow::Result<i32> {
 }
 
 pub fn done(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
+    let before = ctx.repo.find_task(id)?;
+    let was_already_done = before
+        .as_ref()
+        .map(|t| t.completed_at.is_some())
+        .unwrap_or(false);
+
     match ctx.repo.mark_task_done(id, chrono::Utc::now()) {
         Ok(t) => {
-            println!("Done: #{} {}", t.id, t.title);
+            if was_already_done {
+                println!("Task #{} was already done.", t.id);
+            } else {
+                println!("Done: #{} {}", t.id, t.title);
+            }
             Ok(0)
         }
         Err(RepoError::TaskNotFound(_)) => {
@@ -153,9 +206,19 @@ pub fn done(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
 }
 
 pub fn archive(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
+    let before = ctx.repo.find_task(id)?;
+    let was_already_archived = before
+        .as_ref()
+        .map(|t| t.archived_at.is_some())
+        .unwrap_or(false);
+
     match ctx.repo.archive_task(id, chrono::Utc::now()) {
         Ok(t) => {
-            println!("Archived: #{} {}", t.id, t.title);
+            if was_already_archived {
+                println!("Task #{} was already archived.", t.id);
+            } else {
+                println!("Archived: #{} {}", t.id, t.title);
+            }
             Ok(0)
         }
         Err(RepoError::TaskNotFound(_)) => {

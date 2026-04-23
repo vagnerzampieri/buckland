@@ -142,22 +142,44 @@ impl Repo for SqliteRepo {
 
     fn mark_task_done(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task> {
         let updated = self.conn.execute(
-            "UPDATE tasks SET completed_at = ?1, updated_at = ?1 WHERE id = ?2",
+            "UPDATE tasks SET completed_at = ?1, updated_at = ?1 \
+             WHERE id = ?2 AND completed_at IS NULL",
             params![at, id],
         )?;
         if updated == 0 {
-            return Err(RepoError::TaskNotFound(id));
+            // Distinguish "not found" from "already done" so the CLI can give a
+            // better message.
+            let exists: bool = self
+                .conn
+                .query_row("SELECT 1 FROM tasks WHERE id = ?1", [id], |_| Ok(true))
+                .optional()?
+                .unwrap_or(false);
+            if !exists {
+                return Err(RepoError::TaskNotFound(id));
+            }
+            // Already done — no-op, return the existing row (with its original completed_at).
         }
         load_task(&self.conn, id)
     }
 
     fn archive_task(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task> {
         let updated = self.conn.execute(
-            "UPDATE tasks SET archived_at = ?1, updated_at = ?1 WHERE id = ?2",
+            "UPDATE tasks SET archived_at = ?1, updated_at = ?1 \
+             WHERE id = ?2 AND archived_at IS NULL",
             params![at, id],
         )?;
         if updated == 0 {
-            return Err(RepoError::TaskNotFound(id));
+            // Distinguish "not found" from "already archived" so the CLI can give a
+            // better message.
+            let exists: bool = self
+                .conn
+                .query_row("SELECT 1 FROM tasks WHERE id = ?1", [id], |_| Ok(true))
+                .optional()?
+                .unwrap_or(false);
+            if !exists {
+                return Err(RepoError::TaskNotFound(id));
+            }
+            // Already archived — no-op, return the existing row (with its original archived_at).
         }
         load_task(&self.conn, id)
     }

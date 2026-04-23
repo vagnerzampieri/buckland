@@ -70,3 +70,35 @@ fn done_unknown_id_fails() {
         .code(1)
         .stdout(contains("not found"));
 }
+
+#[test]
+fn done_is_idempotent() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "t"]).assert().success();
+    bl(&home)
+        .args(["done", "1"])
+        .assert()
+        .success()
+        .stdout(contains("Done"));
+    bl(&home)
+        .args(["done", "1"])
+        .assert()
+        .code(0)
+        .stdout(contains("already done"));
+}
+
+#[test]
+fn archive_is_idempotent() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "t"]).assert().success();
+    bl(&home)
+        .args(["archive", "1"])
+        .assert()
+        .success()
+        .stdout(contains("Archived"));
+    bl(&home)
+        .args(["archive", "1"])
+        .assert()
+        .code(0)
+        .stdout(contains("already archived"));
+}

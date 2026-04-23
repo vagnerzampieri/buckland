@@ -18,7 +18,7 @@ pub fn open() -> anyhow::Result<Context> {
 
 fn resolve_db_path() -> PathBuf {
     match std::env::var("BUCKLAND_HOME") {
-        Ok(home) if !home.is_empty() => PathBuf::from(home).join("buckland.db"),
+        Ok(home) if !home.trim().is_empty() => PathBuf::from(home.trim()).join("buckland.db"),
         _ => config::db_path(),
     }
 }
