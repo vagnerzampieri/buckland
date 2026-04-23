@@ -95,12 +95,47 @@ pub fn start(ctx: &mut Context, target: &str) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-pub fn stop(_ctx: &mut Context) -> anyhow::Result<i32> {
-    todo!("Task 11")
+pub fn stop(ctx: &mut Context) -> anyhow::Result<i32> {
+    let now = chrono::Utc::now();
+    match TimerOps::new(&mut ctx.repo).stop(now)? {
+        Some(entry) => {
+            let task = ctx.repo.find_task(entry.task_id)?.expect("entry has task");
+            let elapsed = entry.duration(now);
+            println!(
+                "Stopped #{} {} ({})",
+                task.id,
+                task.title,
+                crate::cli::format::duration_hms(elapsed),
+            );
+            Ok(0)
+        }
+        None => {
+            println!("Nothing to stop.");
+            Ok(1)
+        }
+    }
 }
 
-pub fn status(_ctx: &mut Context) -> anyhow::Result<i32> {
-    todo!("Task 11")
+pub fn status(ctx: &mut Context) -> anyhow::Result<i32> {
+    let now = chrono::Utc::now();
+    match ctx.repo.active_time_entry()? {
+        Some(entry) => {
+            let task = ctx.repo.find_task(entry.task_id)?.expect("entry has task");
+            let elapsed = entry.duration(now);
+            let started_local = entry.started_at.with_timezone(&chrono::Local);
+            println!(
+                "{} — {} (started {})",
+                task.title,
+                crate::cli::format::duration_hms(elapsed),
+                started_local.format("%H:%M:%S"),
+            );
+            Ok(0)
+        }
+        None => {
+            println!("No active timer.");
+            Ok(1)
+        }
+    }
 }
 
 pub fn done(_ctx: &mut Context, _id: i64) -> anyhow::Result<i32> {

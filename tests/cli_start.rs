@@ -9,7 +9,6 @@ fn bl(home: &TempDir) -> Command {
 }
 
 #[test]
-#[ignore = "unlocks in Task 11 when `status` lands"]
 fn start_by_numeric_id_works() {
     let home = TempDir::new().unwrap();
     bl(&home).args(["add", "existing"]).assert().success();
@@ -22,7 +21,6 @@ fn start_by_numeric_id_works() {
 }
 
 #[test]
-#[ignore = "unlocks in Task 11 when `status` lands"]
 fn start_by_text_creates_and_starts() {
     let home = TempDir::new().unwrap();
     bl(&home)
@@ -40,7 +38,6 @@ fn start_missing_numeric_errors() {
 }
 
 #[test]
-#[ignore = "unlocks in Task 11 when `status` lands"]
 fn start_switches_active_task() {
     let home = TempDir::new().unwrap();
     bl(&home).args(["add", "first"]).assert().success();
