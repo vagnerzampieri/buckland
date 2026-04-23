@@ -1,13 +1,11 @@
-//! Domain types: Task, TimeEntry, ShortcutStory.
-//!
-//! These are plain data structures with minimal behavior. Persistence is
-//! the storage layer's concern; domain operations live in sibling modules
-//! like `timer_ops`.
+//! Domain types and operations.
 
 pub mod shortcut_story;
 pub mod task;
 pub mod time_entry;
+pub mod timer_ops;
 
 pub use shortcut_story::ShortcutStory;
 pub use task::Task;
 pub use time_entry::TimeEntry;
+pub use timer_ops::TimerOps;
