@@ -18,7 +18,6 @@ fn seed(home: &TempDir) {
 }
 
 #[test]
-#[ignore = "unlocks in Task 12 when done/archive commands land"]
 fn default_shows_only_open() {
     let home = TempDir::new().unwrap();
     seed(&home);
@@ -32,7 +31,6 @@ fn default_shows_only_open() {
 }
 
 #[test]
-#[ignore = "unlocks in Task 12 when done/archive commands land"]
 fn completed_flag_shows_completed() {
     let home = TempDir::new().unwrap();
     seed(&home);
@@ -44,7 +42,6 @@ fn completed_flag_shows_completed() {
 }
 
 #[test]
-#[ignore = "unlocks in Task 12 when done/archive commands land"]
 fn archived_flag_shows_archived() {
     let home = TempDir::new().unwrap();
     seed(&home);
@@ -56,7 +53,6 @@ fn archived_flag_shows_archived() {
 }
 
 #[test]
-#[ignore = "unlocks in Task 12 when done/archive commands land"]
 fn all_flag_shows_everything() {
     let home = TempDir::new().unwrap();
     seed(&home);

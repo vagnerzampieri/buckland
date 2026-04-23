@@ -5,7 +5,7 @@
 
 use crate::cli::context::Context;
 use crate::domain::{Task, TimerOps};
-use crate::storage::Repo;
+use crate::storage::{Repo, RepoError};
 
 pub fn add(ctx: &mut Context, title: &str, description: Option<&str>) -> anyhow::Result<i32> {
     let trimmed = title.trim();
@@ -138,14 +138,50 @@ pub fn status(ctx: &mut Context) -> anyhow::Result<i32> {
     }
 }
 
-pub fn done(_ctx: &mut Context, _id: i64) -> anyhow::Result<i32> {
-    todo!("Task 12")
+pub fn done(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
+    match ctx.repo.mark_task_done(id, chrono::Utc::now()) {
+        Ok(t) => {
+            println!("Done: #{} {}", t.id, t.title);
+            Ok(0)
+        }
+        Err(RepoError::TaskNotFound(_)) => {
+            println!("Task #{id} not found.");
+            Ok(1)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
-pub fn archive(_ctx: &mut Context, _id: i64) -> anyhow::Result<i32> {
-    todo!("Task 12")
+pub fn archive(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
+    match ctx.repo.archive_task(id, chrono::Utc::now()) {
+        Ok(t) => {
+            println!("Archived: #{} {}", t.id, t.title);
+            Ok(0)
+        }
+        Err(RepoError::TaskNotFound(_)) => {
+            println!("Task #{id} not found.");
+            Ok(1)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
-pub fn delete(_ctx: &mut Context, _id: i64) -> anyhow::Result<i32> {
-    todo!("Task 12")
+pub fn delete(ctx: &mut Context, id: i64) -> anyhow::Result<i32> {
+    match ctx.repo.delete_task(id) {
+        Ok(()) => {
+            println!("Deleted: #{id}");
+            Ok(0)
+        }
+        Err(RepoError::TaskHasEntries(_)) => {
+            println!(
+                "Task #{id} has time entries. Use `bl archive {id}` to hide it without losing history."
+            );
+            Ok(1)
+        }
+        Err(RepoError::TaskNotFound(_)) => {
+            println!("Task #{id} not found.");
+            Ok(1)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
