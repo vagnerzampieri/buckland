@@ -3,9 +3,11 @@
 //! one — all in one shot.
 
 use crate::domain::TimeEntry;
+use crate::storage::repo::TIME_ENTRY_COLS;
 use crate::storage::{RepoResult, SqliteRepo};
 use chrono::{DateTime, Utc};
 use rusqlite::params;
+use rusqlite::OptionalExtension;
 
 pub struct TimerOps<'a> {
     repo: &'a mut SqliteRepo,
@@ -17,8 +19,9 @@ impl<'a> TimerOps<'a> {
     }
 
     /// Start a timer for `task_id` at `now`. If any timer is active, end it
-    /// first. Both actions share a transaction so there's never a moment
-    /// with two active entries.
+    /// at the exact same `now` timestamp so there is no overlap and no gap
+    /// between entries. Both actions share a transaction so there's never
+    /// a moment with two active entries.
     pub fn start(&mut self, task_id: i64, now: DateTime<Utc>) -> RepoResult<TimeEntry> {
         let tx = self.repo.transaction()?;
         tx.execute(
@@ -31,8 +34,7 @@ impl<'a> TimerOps<'a> {
         )?;
         let id = tx.last_insert_rowid();
         let entry = tx.query_row(
-            "SELECT id, task_id, started_at, ended_at, notes, created_at \
-             FROM time_entries WHERE id = ?1",
+            &format!("SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE id = ?1"),
             [id],
             |row| TimeEntry::try_from(row),
         )?;
@@ -50,7 +52,7 @@ impl<'a> TimerOps<'a> {
                 [],
                 |row| row.get(0),
             )
-            .ok();
+            .optional()?;
         let Some(id) = active_id else {
             tx.commit()?;
             return Ok(None);
@@ -60,8 +62,7 @@ impl<'a> TimerOps<'a> {
             params![now, id],
         )?;
         let entry = tx.query_row(
-            "SELECT id, task_id, started_at, ended_at, notes, created_at \
-             FROM time_entries WHERE id = ?1",
+            &format!("SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE id = ?1"),
             [id],
             |row| TimeEntry::try_from(row),
         )?;
@@ -140,5 +141,11 @@ mod tests {
                 .unwrap();
             assert_eq!(active_count, 1, "two active at hour {h}");
         }
+    }
+
+    #[test]
+    fn start_with_unknown_task_returns_error() {
+        let mut repo = SqliteRepo::in_memory();
+        assert!(TimerOps::new(&mut repo).start(999, at(10)).is_err());
     }
 }

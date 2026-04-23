@@ -75,7 +75,7 @@ impl SqliteRepo {
 const TASK_COLS: &str =
     "id, title, description, shortcut_story_id, completed_at, archived_at, created_at, updated_at";
 
-const TIME_ENTRY_COLS: &str = "id, task_id, started_at, ended_at, notes, created_at";
+pub(crate) const TIME_ENTRY_COLS: &str = "id, task_id, started_at, ended_at, notes, created_at";
 
 fn load_task(conn: &Connection, id: i64) -> RepoResult<Task> {
     conn.query_row(
