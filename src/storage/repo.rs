@@ -1,0 +1,339 @@
+//! The storage contract consumed by the domain layer.
+//!
+//! `Repo` abstracts the concrete database. `SqliteRepo` is the production
+//! implementation. Tests can build on an in-memory SqliteRepo via
+//! `SqliteRepo::in_memory()`.
+
+use crate::domain::{Task, TimeEntry};
+use chrono::{DateTime, Duration, Utc};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
+
+#[derive(Debug, thiserror::Error)]
+pub enum RepoError {
+    #[error("task {0} not found")]
+    TaskNotFound(i64),
+    #[error("time entry {0} not found")]
+    TimeEntryNotFound(i64),
+    #[error("cannot hard-delete task {0}: it has time entries. Use archive instead.")]
+    TaskHasEntries(i64),
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+}
+
+pub type RepoResult<T> = Result<T, RepoError>;
+
+pub trait Repo {
+    fn create_task(&mut self, title: &str, description: Option<&str>) -> RepoResult<Task>;
+    fn find_task(&self, id: i64) -> RepoResult<Option<Task>>;
+    fn list_open_tasks(&self) -> RepoResult<Vec<Task>>;
+    fn list_completed_tasks(&self) -> RepoResult<Vec<Task>>;
+    fn list_archived_tasks(&self) -> RepoResult<Vec<Task>>;
+    fn list_all_tasks(&self) -> RepoResult<Vec<Task>>;
+    fn mark_task_done(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task>;
+    fn archive_task(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task>;
+    fn delete_task(&mut self, id: i64) -> RepoResult<()>;
+
+    fn create_time_entry(
+        &mut self,
+        task_id: i64,
+        started_at: DateTime<Utc>,
+    ) -> RepoResult<TimeEntry>;
+    fn end_time_entry(&mut self, id: i64, ended_at: DateTime<Utc>) -> RepoResult<TimeEntry>;
+    fn active_time_entry(&self) -> RepoResult<Option<TimeEntry>>;
+    fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>>;
+    fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration>;
+    fn delete_time_entry(&mut self, id: i64) -> RepoResult<()>;
+}
+
+pub struct SqliteRepo {
+    conn: Connection,
+}
+
+impl SqliteRepo {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+
+    #[cfg(test)]
+    pub fn in_memory() -> Self {
+        let conn = super::open_memory().expect("open in-memory DB");
+        Self { conn }
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    pub fn transaction(&mut self) -> RepoResult<Transaction<'_>> {
+        Ok(self.conn.transaction()?)
+    }
+}
+
+const TASK_COLS: &str =
+    "id, title, description, shortcut_story_id, completed_at, archived_at, created_at, updated_at";
+
+fn load_task(conn: &Connection, id: i64) -> RepoResult<Task> {
+    conn.query_row(
+        &format!("SELECT {TASK_COLS} FROM tasks WHERE id = ?1"),
+        [id],
+        |row| Task::try_from(row),
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => RepoError::TaskNotFound(id),
+        other => RepoError::Sqlite(other),
+    })
+}
+
+fn list_tasks_where(conn: &Connection, where_clause: &str) -> RepoResult<Vec<Task>> {
+    let sql =
+        format!("SELECT {TASK_COLS} FROM tasks WHERE {where_clause} ORDER BY created_at DESC");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| Task::try_from(row))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+impl Repo for SqliteRepo {
+    fn create_task(&mut self, title: &str, description: Option<&str>) -> RepoResult<Task> {
+        let now = Utc::now();
+        self.conn.execute(
+            "INSERT INTO tasks (title, description, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?3)",
+            params![title, description, now],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        load_task(&self.conn, id)
+    }
+
+    fn find_task(&self, id: i64) -> RepoResult<Option<Task>> {
+        self.conn
+            .query_row(
+                &format!("SELECT {TASK_COLS} FROM tasks WHERE id = ?1"),
+                [id],
+                |row| Task::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
+    fn list_open_tasks(&self) -> RepoResult<Vec<Task>> {
+        list_tasks_where(&self.conn, "completed_at IS NULL AND archived_at IS NULL")
+    }
+
+    fn list_completed_tasks(&self) -> RepoResult<Vec<Task>> {
+        list_tasks_where(&self.conn, "completed_at IS NOT NULL")
+    }
+
+    fn list_archived_tasks(&self) -> RepoResult<Vec<Task>> {
+        list_tasks_where(&self.conn, "archived_at IS NOT NULL")
+    }
+
+    fn list_all_tasks(&self) -> RepoResult<Vec<Task>> {
+        list_tasks_where(&self.conn, "1 = 1")
+    }
+
+    fn mark_task_done(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task> {
+        let updated = self.conn.execute(
+            "UPDATE tasks SET completed_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![at, id],
+        )?;
+        if updated == 0 {
+            return Err(RepoError::TaskNotFound(id));
+        }
+        load_task(&self.conn, id)
+    }
+
+    fn archive_task(&mut self, id: i64, at: DateTime<Utc>) -> RepoResult<Task> {
+        let updated = self.conn.execute(
+            "UPDATE tasks SET archived_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![at, id],
+        )?;
+        if updated == 0 {
+            return Err(RepoError::TaskNotFound(id));
+        }
+        load_task(&self.conn, id)
+    }
+
+    fn delete_task(&mut self, id: i64) -> RepoResult<()> {
+        let entry_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM time_entries WHERE task_id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        if entry_count > 0 {
+            return Err(RepoError::TaskHasEntries(id));
+        }
+        let removed = self.conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
+        if removed == 0 {
+            return Err(RepoError::TaskNotFound(id));
+        }
+        Ok(())
+    }
+
+    fn create_time_entry(
+        &mut self,
+        task_id: i64,
+        started_at: DateTime<Utc>,
+    ) -> RepoResult<TimeEntry> {
+        self.conn.execute(
+            "INSERT INTO time_entries (task_id, started_at) VALUES (?1, ?2)",
+            params![task_id, started_at],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.conn
+            .query_row(
+                "SELECT id, task_id, started_at, ended_at, notes, created_at \
+                 FROM time_entries WHERE id = ?1",
+                [id],
+                |row| TimeEntry::try_from(row),
+            )
+            .map_err(RepoError::from)
+    }
+
+    fn end_time_entry(&mut self, id: i64, ended_at: DateTime<Utc>) -> RepoResult<TimeEntry> {
+        let updated = self.conn.execute(
+            "UPDATE time_entries SET ended_at = ?1 WHERE id = ?2 AND ended_at IS NULL",
+            params![ended_at, id],
+        )?;
+        if updated == 0 {
+            return Err(RepoError::TimeEntryNotFound(id));
+        }
+        self.conn
+            .query_row(
+                "SELECT id, task_id, started_at, ended_at, notes, created_at \
+                 FROM time_entries WHERE id = ?1",
+                [id],
+                |row| TimeEntry::try_from(row),
+            )
+            .map_err(RepoError::from)
+    }
+
+    fn active_time_entry(&self) -> RepoResult<Option<TimeEntry>> {
+        self.conn
+            .query_row(
+                "SELECT id, task_id, started_at, ended_at, notes, created_at \
+                 FROM time_entries WHERE ended_at IS NULL LIMIT 1",
+                [],
+                |row| TimeEntry::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
+    fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, started_at, ended_at, notes, created_at \
+             FROM time_entries WHERE task_id = ?1 ORDER BY started_at DESC",
+        )?;
+        let rows = stmt.query_map([task_id], |row| TimeEntry::try_from(row))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration> {
+        let entries = self.list_entries_for_task(task_id)?;
+        Ok(entries
+            .iter()
+            .fold(Duration::zero(), |acc, e| acc + e.duration(now)))
+    }
+
+    fn delete_time_entry(&mut self, id: i64) -> RepoResult<()> {
+        let removed = self
+            .conn
+            .execute("DELETE FROM time_entries WHERE id = ?1", [id])?;
+        if removed == 0 {
+            return Err(RepoError::TimeEntryNotFound(id));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> SqliteRepo {
+        SqliteRepo::in_memory()
+    }
+
+    #[test]
+    fn create_and_find_task() {
+        let mut r = repo();
+        let t = r.create_task("fix login", Some("oauth glitch")).unwrap();
+        assert_eq!(t.title, "fix login");
+        assert_eq!(t.description.as_deref(), Some("oauth glitch"));
+        assert!(t.is_open());
+        assert_eq!(r.find_task(t.id).unwrap().unwrap().id, t.id);
+    }
+
+    #[test]
+    fn list_open_excludes_completed_and_archived() {
+        let mut r = repo();
+        let a = r.create_task("open", None).unwrap();
+        let b = r.create_task("done", None).unwrap();
+        let c = r.create_task("arch", None).unwrap();
+        r.mark_task_done(b.id, Utc::now()).unwrap();
+        r.archive_task(c.id, Utc::now()).unwrap();
+        let open: Vec<i64> = r
+            .list_open_tasks()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(open, vec![a.id]);
+    }
+
+    #[test]
+    fn delete_task_blocked_when_entries_exist() {
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        r.create_time_entry(t.id, Utc::now()).unwrap();
+        match r.delete_task(t.id) {
+            Err(RepoError::TaskHasEntries(id)) => assert_eq!(id, t.id),
+            other => panic!("expected TaskHasEntries, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_task_succeeds_when_no_entries() {
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        r.delete_task(t.id).unwrap();
+        assert!(r.find_task(t.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn create_entry_sets_active_and_end_clears_it() {
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        let e = r.create_time_entry(t.id, Utc::now()).unwrap();
+        assert!(r.active_time_entry().unwrap().is_some());
+        r.end_time_entry(e.id, Utc::now()).unwrap();
+        assert!(r.active_time_entry().unwrap().is_none());
+    }
+
+    #[test]
+    fn task_total_duration_sums_entries() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        let a = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 9, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(a.id, Utc.with_ymd_and_hms(2026, 4, 22, 9, 30, 0).unwrap())
+            .unwrap();
+        let b = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(b.id, Utc.with_ymd_and_hms(2026, 4, 22, 10, 45, 0).unwrap())
+            .unwrap();
+        let total = r.task_total_duration(t.id, Utc::now()).unwrap();
+        assert_eq!(total, Duration::minutes(30 + 45));
+    }
+}
