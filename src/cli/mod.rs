@@ -4,6 +4,7 @@ pub mod args;
 pub mod commands;
 pub mod context;
 pub mod format;
+pub mod resolve;
 
 use args::{Cli, Commands};
 use clap::Parser;

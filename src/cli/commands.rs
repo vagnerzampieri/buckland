@@ -4,7 +4,7 @@
 //! code. 0 = success; 1 = logical failure; other codes reserved.
 
 use crate::cli::context::Context;
-use crate::domain::Task;
+use crate::domain::{Task, TimerOps};
 use crate::storage::Repo;
 
 pub fn add(ctx: &mut Context, title: &str, description: Option<&str>) -> anyhow::Result<i32> {
@@ -72,8 +72,27 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-pub fn start(_ctx: &mut Context, _target: &str) -> anyhow::Result<i32> {
-    todo!("Task 10")
+pub fn start(ctx: &mut Context, target: &str) -> anyhow::Result<i32> {
+    let resolved = crate::cli::resolve::resolve_or_create(&mut ctx.repo, target)?;
+    let (task_id, task_title) = match resolved {
+        crate::cli::resolve::Resolved::Existing(id) => {
+            let t = ctx.repo.find_task(id)?.expect("resolved id");
+            (t.id, t.title)
+        }
+        crate::cli::resolve::Resolved::Created(t) => (t.id, t.title),
+    };
+
+    let now = chrono::Utc::now();
+    let entry = TimerOps::new(&mut ctx.repo).start(task_id, now)?;
+    println!(
+        "Started #{task_id} {task_title} (entry {}, {})",
+        entry.id,
+        entry
+            .started_at
+            .with_timezone(&chrono::Local)
+            .format("%H:%M:%S"),
+    );
+    Ok(0)
 }
 
 pub fn stop(_ctx: &mut Context) -> anyhow::Result<i32> {
