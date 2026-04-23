@@ -70,6 +70,10 @@ impl Default for TrayConfig {
 }
 
 /// Data file location (the SQLite database).
+///
+/// Falls back to `./buckland` when the user's data dir cannot be determined
+/// (e.g., `$HOME` is unset). This is intentional degraded-mode behavior;
+/// callers who need strict resolution should check `dirs::data_dir()` directly.
 pub fn data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -81,6 +85,9 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Config file location (`config.toml`).
+///
+/// Falls back to `./buckland` when the user's config dir cannot be determined
+/// (e.g., `$HOME` is unset). Same caveat as [`data_dir`].
 pub fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -109,7 +116,7 @@ pub fn save(path: &Path, cfg: &Config) -> anyhow::Result<()> {
     let text = toml::to_string_pretty(cfg)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -117,6 +124,10 @@ pub fn save(path: &Path, cfg: &Config) -> anyhow::Result<()> {
             .mode(0o600)
             .open(path)?;
         file.write_all(text.as_bytes())?;
+        // `OpenOptionsExt::mode` only applies to newly created files. If the
+        // file already existed with a wider mode (e.g., 0644), the open above
+        // leaves the old mode intact. Enforce 0600 unconditionally.
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(not(unix))]
     {
@@ -145,6 +156,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.shortcut.token = Some("abc123".into());
         cfg.tray.poll_seconds = 45;
+        cfg.ui.accent_color = "magenta".into();
         save(&path, &cfg).unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded, cfg);
@@ -170,5 +182,33 @@ mod tests {
         save(&path, &Config::default()).unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
+    }
+
+    #[test]
+    fn malformed_toml_returns_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "not = valid [toml").unwrap();
+        assert!(load(&path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_hardens_pre_existing_world_readable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        // Pre-create the file with a wider, world-readable mode (0o644).
+        fs::write(&path, "").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        save(&path, &Config::default()).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "save should harden pre-existing file, got {mode:o}"
+        );
     }
 }
