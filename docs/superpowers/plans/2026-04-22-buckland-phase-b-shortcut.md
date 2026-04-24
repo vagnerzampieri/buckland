@@ -1039,7 +1039,7 @@ The fetcher exposes `refresh(id)` (force re-fetch, used by `bl shortcut <SC-ID>`
 use crate::domain::ShortcutStory;
 use crate::shortcut::client::{Client, ShortcutError};
 use crate::shortcut::story::Story;
-use crate::storage::{Repo, RepoError, SqliteRepo};
+use crate::storage::{Repo, RepoError};
 use chrono::{DateTime, Duration, Utc};
 
 /// 1h cache TTL, per the spec.
@@ -1073,9 +1073,9 @@ impl Fetcher {
     /// Cache-first get. Returns cached row if fresh; otherwise refreshes.
     /// If the refresh fails but a (stale) cached row exists, returns that
     /// with `is_stale: true`. A 404 from upstream always propagates.
-    pub fn get(
+    pub fn get<R: Repo>(
         &self,
-        repo: &mut SqliteRepo,
+        repo: &mut R,
         external_id: i64,
         now: DateTime<Utc>,
     ) -> Result<Cached, FetcherError> {
@@ -1113,9 +1113,9 @@ impl Fetcher {
     }
 
     /// Force a refresh regardless of cache freshness. Used by `bl shortcut`.
-    pub fn refresh(
+    pub fn refresh<R: Repo>(
         &self,
-        repo: &mut SqliteRepo,
+        repo: &mut R,
         external_id: i64,
         now: DateTime<Utc>,
     ) -> Result<ShortcutStory, FetcherError> {
@@ -1127,6 +1127,7 @@ impl Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::SqliteRepo;
     use mockito::Server;
 
     fn story_body(id: i64, name: &str) -> String {
