@@ -93,12 +93,7 @@ fn start_sc_with_existing_linked_task_resumes_without_duplicate() {
         .stdout(contains("The answer"));
 
     // Sanity: listing should contain SC-42 exactly once across the rows.
-    let out = env
-        .bl()
-        .args(["list", "--all"])
-        .output()
-        .unwrap()
-        .stdout;
+    let out = env.bl().args(["list", "--all"]).output().unwrap().stdout;
     let text = String::from_utf8(out).unwrap();
     assert_eq!(text.matches("SC-42").count(), 1, "got:\n{text}");
 }

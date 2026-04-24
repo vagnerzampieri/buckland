@@ -64,10 +64,7 @@ pub trait Repo {
         story_row_id: i64,
         at: DateTime<Utc>,
     ) -> RepoResult<Task>;
-    fn find_task_by_story_external_id(
-        &self,
-        external_id: i64,
-    ) -> RepoResult<Option<Task>>;
+    fn find_task_by_story_external_id(&self, external_id: i64) -> RepoResult<Option<Task>>;
 }
 
 pub struct SqliteRepo {
@@ -97,8 +94,7 @@ impl SqliteRepo {
 const TASK_COLS: &str =
     "id, title, description, shortcut_story_id, completed_at, archived_at, created_at, updated_at";
 
-const SHORTCUT_STORY_COLS: &str =
-    "id, external_id, title, epic_name, state, fetched_at";
+const SHORTCUT_STORY_COLS: &str = "id, external_id, title, epic_name, state, fetched_at";
 
 pub(crate) const TIME_ENTRY_COLS: &str = "id, task_id, started_at, ended_at, notes, created_at";
 
@@ -357,9 +353,7 @@ impl Repo for SqliteRepo {
     fn find_shortcut_story_by_row_id(&self, id: i64) -> RepoResult<Option<ShortcutStory>> {
         self.conn
             .query_row(
-                &format!(
-                    "SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories WHERE id = ?1"
-                ),
+                &format!("SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories WHERE id = ?1"),
                 [id],
                 |row| ShortcutStory::try_from(row),
             )
@@ -384,10 +378,7 @@ impl Repo for SqliteRepo {
         load_task(&self.conn, task_id)
     }
 
-    fn find_task_by_story_external_id(
-        &self,
-        external_id: i64,
-    ) -> RepoResult<Option<Task>> {
+    fn find_task_by_story_external_id(&self, external_id: i64) -> RepoResult<Option<Task>> {
         self.conn
             .query_row(
                 &format!(

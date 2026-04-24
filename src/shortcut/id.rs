@@ -21,7 +21,10 @@ pub fn normalize(raw: &str) -> Result<i64, IdError> {
         return Err(IdError::Empty);
     }
 
-    let body = match trimmed.strip_prefix("SC-").or_else(|| trimmed.strip_prefix("sc-")) {
+    let body = match trimmed
+        .strip_prefix("SC-")
+        .or_else(|| trimmed.strip_prefix("sc-"))
+    {
         Some(rest) => rest,
         None => trimmed,
     };
