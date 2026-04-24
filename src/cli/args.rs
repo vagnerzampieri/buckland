@@ -20,6 +20,9 @@ pub enum Commands {
         /// Optional longer description attached to the task.
         #[arg(long)]
         description: Option<String>,
+        /// Link the task to a Shortcut story. Accepts "SC-123", "sc-123", or "123".
+        #[arg(long)]
+        sc: Option<String>,
     },
     /// List tasks. Default: only open tasks.
     List {
@@ -58,5 +61,10 @@ pub enum Commands {
     Delete {
         /// Id of the task to permanently delete.
         id: i64,
+    },
+    /// Force re-fetch of a Shortcut story into the local cache.
+    Shortcut {
+        /// Story id: "SC-123", "sc-123", or "123".
+        id: String,
     },
 }

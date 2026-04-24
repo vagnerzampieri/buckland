@@ -24,6 +24,9 @@ pub struct Config {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShortcutConfig {
     pub token: Option<String>,
+    /// Override for tests and on-prem Shortcut deployments. Unset in prod.
+    #[serde(default)]
+    pub api_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

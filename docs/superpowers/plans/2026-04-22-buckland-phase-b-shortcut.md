@@ -747,9 +747,10 @@ git commit -m "feat(shortcut): blocking HTTP client with typed errors"
 **Files:**
 - Modify: `src/storage/repo.rs`
 
-Add four methods to the `Repo` trait and implement them on `SqliteRepo`:
+Add five methods to the `Repo` trait and implement them on `SqliteRepo`:
 - `upsert_shortcut_story(story: &Story, fetched_at: DateTime<Utc>) -> RepoResult<ShortcutStory>` — insert or update keyed by `external_id`.
 - `find_shortcut_story_by_external_id(external_id: i64) -> RepoResult<Option<ShortcutStory>>`.
+- `find_shortcut_story_by_row_id(id: i64) -> RepoResult<Option<ShortcutStory>>` — looks up by SQLite primary key; used by `bl list` to resolve the SC label without raw SQL.
 - `link_task_to_story(task_id: i64, story_row_id: i64, at: DateTime<Utc>) -> RepoResult<Task>` — sets `tasks.shortcut_story_id`.
 - `find_task_by_story_external_id(external_id: i64) -> RepoResult<Option<Task>>` — used by `bl start SC-NNN` to check "is there already a task for this story?"
 
@@ -860,6 +861,26 @@ Add this test block at the bottom of `src/storage/repo.rs` (before the closing `
         let r = repo();
         assert!(r.find_task_by_story_external_id(404).unwrap().is_none());
     }
+
+    #[test]
+    fn find_shortcut_story_by_row_id_roundtrips() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 77,
+                    title: Some("x".into()),
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let found = r.find_shortcut_story_by_row_id(row.id).unwrap().unwrap();
+        assert_eq!(found.external_id, 77);
+        assert!(r.find_shortcut_story_by_row_id(9999).unwrap().is_none());
+    }
 ```
 
 - [ ] **Step 2: Run tests — expect compile errors**
@@ -888,6 +909,7 @@ Add these method signatures to the `pub trait Repo` block (at the end, before th
         &self,
         external_id: i64,
     ) -> RepoResult<Option<ShortcutStory>>;
+    fn find_shortcut_story_by_row_id(&self, id: i64) -> RepoResult<Option<ShortcutStory>>;
     fn link_task_to_story(
         &mut self,
         task_id: i64,
@@ -900,7 +922,7 @@ Add these method signatures to the `pub trait Repo` block (at the end, before th
     ) -> RepoResult<Option<Task>>;
 ```
 
-- [ ] **Step 4: Implement the four methods on `SqliteRepo`**
+- [ ] **Step 4: Implement the five methods on `SqliteRepo`**
 
 Add this helper constant next to `TASK_COLS`:
 
@@ -963,6 +985,19 @@ Add these methods inside `impl Repo for SqliteRepo` (anywhere after the existing
             .map_err(RepoError::from)
     }
 
+    fn find_shortcut_story_by_row_id(&self, id: i64) -> RepoResult<Option<ShortcutStory>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories WHERE id = ?1"
+                ),
+                [id],
+                |row| ShortcutStory::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
     fn link_task_to_story(
         &mut self,
         task_id: i64,
@@ -1003,7 +1038,7 @@ Add these methods inside `impl Repo for SqliteRepo` (anywhere after the existing
 - [ ] **Step 5: Run the tests**
 
 Run: `cargo test --lib storage::repo`
-Expected: all tests pass, including the 6 new ones.
+Expected: all tests pass, including the 7 new ones.
 
 - [ ] **Step 6: Commit**
 
@@ -1346,9 +1381,12 @@ git commit -m "feat(shortcut): cache-first Fetcher with stale-on-error fallback"
 - Modify: `src/cli/args.rs`
 - Modify: `src/cli/context.rs`
 - Modify: `src/cli/commands.rs`
+- Modify: `src/storage/repo.rs` — adds `find_shortcut_story_by_row_id` to the `Repo` trait + `SqliteRepo` impl + one inline test (logically belongs with Task 4's Repo extensions; landed here because Task 6's test required it).
 - Create: `tests/cli_shortcut_add.rs`
 
 Wire `Fetcher` into `Context` (built only when a token is configured). Extend `bl add` to accept `--sc <ID>`. When present: normalize the id, fetch the story (via Fetcher), upsert the cache row, create the task, link it to the story. If the token is missing or the fetch fails, print a clear error and exit 1 without persisting a half-done task.
+
+`list`'s SC-id column is also introduced here (required by the `add_with_sc_fetches_and_links_story` test). The column uses `ctx.repo.find_shortcut_story_by_row_id` — no raw SQL in the CLI layer. The `ScLinkOutcome` enum replaces the `Result<Result<_, i32>>` anti-pattern in `prepare_sc_link`.
 
 - [ ] **Step 1: Write the integration tests**
 
@@ -1594,8 +1632,8 @@ pub fn add(
 
     let sc_link = match sc {
         Some(raw) => match prepare_sc_link(ctx, raw)? {
-            Ok(link) => Some(link),
-            Err(code) => return Ok(code),
+            ScLinkOutcome::Linked(link) => Some(link),
+            ScLinkOutcome::Exit(code) => return Ok(code),
         },
         None => None,
     };
@@ -1620,39 +1658,44 @@ struct ScLink {
     external_id: i64,
 }
 
-/// Returns Ok(Ok(link)) on success, Ok(Err(exit_code)) on user-facing failures.
-fn prepare_sc_link(ctx: &mut Context, raw: &str) -> anyhow::Result<Result<ScLink, i32>> {
+enum ScLinkOutcome {
+    Linked(ScLink),
+    Exit(i32),
+}
+
+/// Returns Linked(link) on success, Exit(code) on user-facing failures.
+fn prepare_sc_link(ctx: &mut Context, raw: &str) -> anyhow::Result<ScLinkOutcome> {
     use crate::shortcut::{normalize, FetcherError, IdError, ShortcutError};
 
     let external_id = match normalize(raw) {
         Ok(n) => n,
         Err(IdError::Empty | IdError::NonPositive) | Err(IdError::NotDigits(_)) => {
             println!("invalid shortcut id: {raw}");
-            return Ok(Err(1));
+            return Ok(ScLinkOutcome::Exit(1));
         }
     };
 
     let Some(fetcher) = ctx.fetcher.as_ref() else {
         println!("shortcut.token is not configured in config.toml");
-        return Ok(Err(1));
+        return Ok(ScLinkOutcome::Exit(1));
     };
 
     match fetcher.get(&mut ctx.repo, external_id, chrono::Utc::now()) {
-        Ok(cached) => Ok(Ok(ScLink {
+        Ok(cached) => Ok(ScLinkOutcome::Linked(ScLink {
             story_row_id: cached.story.id,
             external_id,
         })),
         Err(FetcherError::Shortcut(ShortcutError::NotFound)) => {
             println!("shortcut story SC-{external_id} not found");
-            Ok(Err(1))
+            Ok(ScLinkOutcome::Exit(1))
         }
         Err(FetcherError::Shortcut(ShortcutError::Auth(msg))) => {
             println!("shortcut auth failed: {msg}. Check shortcut.token.");
-            Ok(Err(1))
+            Ok(ScLinkOutcome::Exit(1))
         }
         Err(e) => {
             println!("shortcut fetch failed: {e}");
-            Ok(Err(1))
+            Ok(ScLinkOutcome::Exit(1))
         }
     }
 }
@@ -2325,17 +2368,16 @@ git commit -m "feat(cli): bl start resolves SC-NNN (create-and-link if unknown)"
 
 ---
 
-## Task 9: `bl list` surfaces SC-id when present
+## Task 9: `bl list` SC-id column — COVERAGE ONLY
 
 **Files:**
-- Modify: `src/cli/commands.rs`
 - Modify: `tests/cli_list.rs`
 
-Add an SC-id column to `bl list` output when at least one task in the returned list has a linked story. When no task in the list has a story, the column is omitted so users who never touch Shortcut see unchanged output.
+Task 6 already introduced the SC-id column because its `add_with_sc_fetches_and_links_story` test required it. The column uses `ctx.repo.find_shortcut_story_by_row_id` (no raw SQL) and shows when at least one task in the list has a linked story. This task adds the two scenario tests that give dedicated coverage for the column behavior.
 
 - [ ] **Step 1: Extend `tests/cli_list.rs`**
 
-Append these tests at the bottom of `tests/cli_list.rs`:
+Verify that `list` already implements the conditional column (introduced in Task 6); no code change needed. Append the two scenario tests at the bottom of `tests/cli_list.rs`:
 
 ```rust
 use std::fs;
@@ -2429,83 +2471,9 @@ use mockito; // already implicit via dev-dependency
 
 (If `mockito` isn't already imported, add `use mockito;` — the rest of the file just uses its types qualified as `mockito::Server`.)
 
-- [ ] **Step 2: Implement the conditional SC-id column**
+- [ ] **Step 2: Verify no code change needed**
 
-Replace the existing `list` function in `src/cli/commands.rs` with:
-
-```rust
-pub fn list(ctx: &mut Context, all: bool, archived: bool, completed: bool) -> anyhow::Result<i32> {
-    let now = chrono::Utc::now();
-    let tasks: Vec<Task> = if all {
-        ctx.repo.list_all_tasks()?
-    } else if archived {
-        ctx.repo.list_archived_tasks()?
-    } else if completed {
-        ctx.repo.list_completed_tasks()?
-    } else {
-        ctx.repo.list_open_tasks()?
-    };
-
-    if tasks.is_empty() {
-        match (all, archived, completed) {
-            (true, _, _) => println!("No tasks at all. Use `bl add \"title\"`."),
-            (_, true, _) => println!("No archived tasks."),
-            (_, _, true) => println!("No completed tasks."),
-            _ => println!("No open tasks. Use `bl add \"title\"` to create one."),
-        }
-        return Ok(0);
-    }
-
-    // Collect SC-ids up front so the column-presence decision is one pass.
-    let sc_ids: Vec<Option<i64>> = tasks
-        .iter()
-        .map(|t| match t.shortcut_story_id {
-            Some(row_id) => external_id_for_row(ctx, row_id),
-            None => Ok(None),
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let show_sc = sc_ids.iter().any(|v| v.is_some());
-
-    for (t, sc) in tasks.iter().zip(sc_ids.iter()) {
-        let total = ctx.repo.task_total_duration(t.id, now)?;
-        let status = status_glyph(t);
-        if show_sc {
-            let sc_str = sc
-                .map(|n| format!("SC-{n}"))
-                .unwrap_or_else(|| "—".to_string());
-            println!(
-                "{status} {:>4}  {:<8}  {:<40}  {}",
-                t.id,
-                sc_str,
-                truncate(&t.title, 40),
-                crate::cli::format::duration_compact(total)
-            );
-        } else {
-            println!(
-                "{status} {:>4}  {:<40}  {}",
-                t.id,
-                truncate(&t.title, 40),
-                crate::cli::format::duration_compact(total)
-            );
-        }
-    }
-    Ok(0)
-}
-
-fn external_id_for_row(ctx: &Context, row_id: i64) -> anyhow::Result<Option<i64>> {
-    let conn = ctx.repo.connection();
-    let id: Option<i64> = conn
-        .query_row(
-            "SELECT external_id FROM shortcut_stories WHERE id = ?1",
-            [row_id],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(id)
-}
-```
-
-(This relies on `SqliteRepo::connection()` which is already public per Phase A Task 4 step 2.)
+The conditional SC-id column was introduced in Task 6. Confirm `src/cli/commands.rs` already contains the `find_shortcut_story_by_row_id` call in the `list` function — no edit required.
 
 - [ ] **Step 3: Run tests**
 
@@ -2525,11 +2493,11 @@ cargo run -- list
 # Expect: no SC-id column.
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/cli/commands.rs tests/cli_list.rs
-git commit -m "feat(cli): list shows SC-id column when any task is linked"
+git add tests/cli_list.rs
+git commit -m "test(cli): add scenario coverage for list SC-id column"
 ```
 
 ---

@@ -57,6 +57,7 @@ pub trait Repo {
         &self,
         external_id: i64,
     ) -> RepoResult<Option<ShortcutStory>>;
+    fn find_shortcut_story_by_row_id(&self, id: i64) -> RepoResult<Option<ShortcutStory>>;
     fn link_task_to_story(
         &mut self,
         task_id: i64,
@@ -353,6 +354,19 @@ impl Repo for SqliteRepo {
             .map_err(RepoError::from)
     }
 
+    fn find_shortcut_story_by_row_id(&self, id: i64) -> RepoResult<Option<ShortcutStory>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories WHERE id = ?1"
+                ),
+                [id],
+                |row| ShortcutStory::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
     fn link_task_to_story(
         &mut self,
         task_id: i64,
@@ -574,5 +588,25 @@ mod tests {
     fn find_task_by_story_external_id_none_when_story_absent() {
         let r = repo();
         assert!(r.find_task_by_story_external_id(404).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_shortcut_story_by_row_id_roundtrips() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 77,
+                    title: Some("x".into()),
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let found = r.find_shortcut_story_by_row_id(row.id).unwrap().unwrap();
+        assert_eq!(found.external_id, 77);
+        assert!(r.find_shortcut_story_by_row_id(9999).unwrap().is_none());
     }
 }

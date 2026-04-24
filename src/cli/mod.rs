@@ -13,9 +13,12 @@ pub fn run() -> anyhow::Result<i32> {
     let cli = Cli::parse();
     let mut ctx = context::open()?;
     match cli.command {
-        Commands::Add { title, description } => {
-            commands::add(&mut ctx, &title, description.as_deref())
-        }
+        Commands::Add {
+            title,
+            description,
+            sc,
+        } => commands::add(&mut ctx, &title, description.as_deref(), sc.as_deref()),
+        Commands::Shortcut { id } => commands::shortcut_refresh(&mut ctx, &id),
         Commands::List {
             all,
             archived,
