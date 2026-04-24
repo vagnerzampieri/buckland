@@ -307,7 +307,10 @@ mod tests {
 
     #[test]
     fn rejects_negative() {
-        assert_eq!(normalize("-5").unwrap_err(), IdError::NonPositive);
+        match normalize("-5") {
+            Err(IdError::NotDigits(s)) => assert_eq!(s, "-5"),
+            other => panic!("expected NotDigits, got {other:?}"),
+        }
     }
 
     #[test]
@@ -357,7 +360,7 @@ pub fn normalize(raw: &str) -> Result<i64, IdError> {
         None => trimmed,
     };
 
-    if body.is_empty() || !body.chars().all(|c| c.is_ascii_digit() || c == '-') {
+    if body.is_empty() || !body.chars().all(|c| c.is_ascii_digit()) {
         return Err(IdError::NotDigits(trimmed.to_string()));
     }
 

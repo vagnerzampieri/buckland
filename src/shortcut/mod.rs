@@ -10,6 +10,6 @@ pub mod fetcher;
 pub mod id;
 pub mod story;
 
+pub use id::{normalize, IdError};
 pub use story::Story;
-// Note: re-exports for `id::normalize`, `client::Client`,
-// `fetcher::Fetcher`, and their error types are added in tasks 2, 3, and 5.
+// `Client`, `ShortcutError`, `Fetcher`, `FetcherError` are added in tasks 3 and 5.
