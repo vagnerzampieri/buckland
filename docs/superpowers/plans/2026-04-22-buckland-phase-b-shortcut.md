@@ -750,7 +750,7 @@ git commit -m "feat(shortcut): blocking HTTP client with typed errors"
 Add four methods to the `Repo` trait and implement them on `SqliteRepo`:
 - `upsert_shortcut_story(story: &Story, fetched_at: DateTime<Utc>) -> RepoResult<ShortcutStory>` — insert or update keyed by `external_id`.
 - `find_shortcut_story_by_external_id(external_id: i64) -> RepoResult<Option<ShortcutStory>>`.
-- `link_task_to_story(task_id: i64, story_row_id: i64) -> RepoResult<Task>` — sets `tasks.shortcut_story_id`.
+- `link_task_to_story(task_id: i64, story_row_id: i64, at: DateTime<Utc>) -> RepoResult<Task>` — sets `tasks.shortcut_story_id`.
 - `find_task_by_story_external_id(external_id: i64) -> RepoResult<Option<Task>>` — used by `bl start SC-NNN` to check "is there already a task for this story?"
 
 - [ ] **Step 1: Write inline tests**
@@ -808,7 +808,7 @@ Add this test block at the bottom of `src/storage/repo.rs` (before the closing `
                 Utc::now(),
             )
             .unwrap();
-        let linked = r.link_task_to_story(t.id, row.id).unwrap();
+        let linked = r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
         assert_eq!(linked.shortcut_story_id, Some(row.id));
     }
 
@@ -827,7 +827,7 @@ Add this test block at the bottom of `src/storage/repo.rs` (before the closing `
                 Utc::now(),
             )
             .unwrap();
-        match r.link_task_to_story(999, row.id) {
+        match r.link_task_to_story(999, row.id, Utc::now()) {
             Err(RepoError::TaskNotFound(id)) => assert_eq!(id, 999),
             other => panic!("expected TaskNotFound, got {other:?}"),
         }
@@ -849,7 +849,7 @@ Add this test block at the bottom of `src/storage/repo.rs` (before the closing `
             )
             .unwrap();
         let t = r.create_task("t", None).unwrap();
-        r.link_task_to_story(t.id, row.id).unwrap();
+        r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
         let found = r.find_task_by_story_external_id(88).unwrap().unwrap();
         assert_eq!(found.id, t.id);
         assert_eq!(found.shortcut_story_id, Some(row.id));
@@ -888,7 +888,12 @@ Add these method signatures to the `pub trait Repo` block (at the end, before th
         &self,
         external_id: i64,
     ) -> RepoResult<Option<ShortcutStory>>;
-    fn link_task_to_story(&mut self, task_id: i64, story_row_id: i64) -> RepoResult<Task>;
+    fn link_task_to_story(
+        &mut self,
+        task_id: i64,
+        story_row_id: i64,
+        at: DateTime<Utc>,
+    ) -> RepoResult<Task>;
     fn find_task_by_story_external_id(
         &self,
         external_id: i64,
@@ -958,11 +963,16 @@ Add these methods inside `impl Repo for SqliteRepo` (anywhere after the existing
             .map_err(RepoError::from)
     }
 
-    fn link_task_to_story(&mut self, task_id: i64, story_row_id: i64) -> RepoResult<Task> {
+    fn link_task_to_story(
+        &mut self,
+        task_id: i64,
+        story_row_id: i64,
+        at: DateTime<Utc>,
+    ) -> RepoResult<Task> {
         let updated = self.conn.execute(
             "UPDATE tasks SET shortcut_story_id = ?1, updated_at = ?2 \
              WHERE id = ?3",
-            params![story_row_id, Utc::now(), task_id],
+            params![story_row_id, at, task_id],
         )?;
         if updated == 0 {
             return Err(RepoError::TaskNotFound(task_id));
@@ -1591,7 +1601,9 @@ pub fn add(
 
     let task = ctx.repo.create_task(trimmed, description)?;
     if let Some(link) = sc_link {
-        let linked = ctx.repo.link_task_to_story(task.id, link.story_row_id)?;
+        let linked = ctx
+            .repo
+            .link_task_to_story(task.id, link.story_row_id, chrono::Utc::now())?;
         println!(
             "Added: #{} {} (SC-{})",
             linked.id, linked.title, link.external_id
@@ -2148,7 +2160,7 @@ pub fn resolve_start_target(
             .clone()
             .unwrap_or_else(|| format!("SC-{external_id}"));
         let task = repo.create_task(&title, None)?;
-        let linked = repo.link_task_to_story(task.id, cached.story.id)?;
+        let linked = repo.link_task_to_story(task.id, cached.story.id, chrono::Utc::now())?;
         return Ok(Resolved::Created(linked));
     }
 
@@ -2215,7 +2227,7 @@ mod tests {
             )
             .unwrap();
         let t = repo.create_task("cached", None).unwrap();
-        repo.link_task_to_story(t.id, row.id).unwrap();
+        repo.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
 
         match resolve_start_target(&mut repo, None, "SC-9").unwrap() {
             Resolved::Existing(found) => assert_eq!(found.id, t.id),

@@ -4,7 +4,8 @@
 //! implementation. Tests can build on an in-memory SqliteRepo via
 //! `SqliteRepo::in_memory()`.
 
-use crate::domain::{Task, TimeEntry};
+use crate::domain::{ShortcutStory, Task, TimeEntry};
+use crate::shortcut::Story;
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
@@ -46,6 +47,26 @@ pub trait Repo {
     fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>>;
     fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration>;
     fn delete_time_entry(&mut self, id: i64) -> RepoResult<()>;
+
+    fn upsert_shortcut_story(
+        &mut self,
+        story: &Story,
+        fetched_at: DateTime<Utc>,
+    ) -> RepoResult<ShortcutStory>;
+    fn find_shortcut_story_by_external_id(
+        &self,
+        external_id: i64,
+    ) -> RepoResult<Option<ShortcutStory>>;
+    fn link_task_to_story(
+        &mut self,
+        task_id: i64,
+        story_row_id: i64,
+        at: DateTime<Utc>,
+    ) -> RepoResult<Task>;
+    fn find_task_by_story_external_id(
+        &self,
+        external_id: i64,
+    ) -> RepoResult<Option<Task>>;
 }
 
 pub struct SqliteRepo {
@@ -74,6 +95,9 @@ impl SqliteRepo {
 
 const TASK_COLS: &str =
     "id, title, description, shortcut_story_id, completed_at, archived_at, created_at, updated_at";
+
+const SHORTCUT_STORY_COLS: &str =
+    "id, external_id, title, epic_name, state, fetched_at";
 
 pub(crate) const TIME_ENTRY_COLS: &str = "id, task_id, started_at, ended_at, notes, created_at";
 
@@ -277,6 +301,93 @@ impl Repo for SqliteRepo {
         }
         Ok(())
     }
+
+    fn upsert_shortcut_story(
+        &mut self,
+        story: &Story,
+        fetched_at: DateTime<Utc>,
+    ) -> RepoResult<ShortcutStory> {
+        self.conn.execute(
+            "INSERT INTO shortcut_stories \
+                 (external_id, title, epic_name, state, fetched_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(external_id) DO UPDATE SET \
+                 title = excluded.title, \
+                 epic_name = excluded.epic_name, \
+                 state = excluded.state, \
+                 fetched_at = excluded.fetched_at",
+            params![
+                story.external_id,
+                story.title,
+                story.epic_name,
+                story.state,
+                fetched_at,
+            ],
+        )?;
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories \
+                     WHERE external_id = ?1"
+                ),
+                [story.external_id],
+                |row| ShortcutStory::try_from(row),
+            )
+            .map_err(RepoError::from)
+    }
+
+    fn find_shortcut_story_by_external_id(
+        &self,
+        external_id: i64,
+    ) -> RepoResult<Option<ShortcutStory>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {SHORTCUT_STORY_COLS} FROM shortcut_stories \
+                     WHERE external_id = ?1"
+                ),
+                [external_id],
+                |row| ShortcutStory::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
+    fn link_task_to_story(
+        &mut self,
+        task_id: i64,
+        story_row_id: i64,
+        at: DateTime<Utc>,
+    ) -> RepoResult<Task> {
+        let updated = self.conn.execute(
+            "UPDATE tasks SET shortcut_story_id = ?1, updated_at = ?2 \
+             WHERE id = ?3",
+            params![story_row_id, at, task_id],
+        )?;
+        if updated == 0 {
+            return Err(RepoError::TaskNotFound(task_id));
+        }
+        load_task(&self.conn, task_id)
+    }
+
+    fn find_task_by_story_external_id(
+        &self,
+        external_id: i64,
+    ) -> RepoResult<Option<Task>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {TASK_COLS} FROM tasks \
+                     WHERE shortcut_story_id = \
+                         (SELECT id FROM shortcut_stories WHERE external_id = ?1) \
+                     ORDER BY created_at DESC LIMIT 1"
+                ),
+                [external_id],
+                |row| Task::try_from(row),
+            )
+            .optional()
+            .map_err(RepoError::from)
+    }
 }
 
 #[cfg(test)]
@@ -360,5 +471,108 @@ mod tests {
             .unwrap();
         let total = r.task_total_duration(t.id, Utc::now()).unwrap();
         assert_eq!(total, Duration::minutes(30 + 45));
+    }
+
+    #[test]
+    fn upsert_shortcut_story_inserts_then_updates() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let s1 = Story {
+            external_id: 42,
+            title: Some("first".into()),
+            epic_name: None,
+            state: None,
+        };
+        let now1 = Utc::now();
+        let row1 = r.upsert_shortcut_story(&s1, now1).unwrap();
+        assert_eq!(row1.external_id, 42);
+        assert_eq!(row1.title.as_deref(), Some("first"));
+
+        let s2 = Story {
+            external_id: 42,
+            title: Some("second".into()),
+            epic_name: Some("Epic X".into()),
+            state: Some("backlog".into()),
+        };
+        let now2 = Utc::now();
+        let row2 = r.upsert_shortcut_story(&s2, now2).unwrap();
+        assert_eq!(row2.id, row1.id, "upsert must reuse the same PK");
+        assert_eq!(row2.title.as_deref(), Some("second"));
+        assert_eq!(row2.epic_name.as_deref(), Some("Epic X"));
+    }
+
+    #[test]
+    fn find_shortcut_story_by_external_id_returns_none_when_absent() {
+        let r = repo();
+        assert!(r.find_shortcut_story_by_external_id(999).unwrap().is_none());
+    }
+
+    #[test]
+    fn link_task_to_story_sets_shortcut_story_id() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 7,
+                    title: Some("story".into()),
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let linked = r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
+        assert_eq!(linked.shortcut_story_id, Some(row.id));
+    }
+
+    #[test]
+    fn link_task_to_story_errors_on_missing_task() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 1,
+                    title: None,
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        match r.link_task_to_story(999, row.id, Utc::now()) {
+            Err(RepoError::TaskNotFound(id)) => assert_eq!(id, 999),
+            other => panic!("expected TaskNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_task_by_story_external_id_finds_linked_task() {
+        use crate::shortcut::Story;
+        let mut r = repo();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 88,
+                    title: Some("s".into()),
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let t = r.create_task("t", None).unwrap();
+        r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
+        let found = r.find_task_by_story_external_id(88).unwrap().unwrap();
+        assert_eq!(found.id, t.id);
+        assert_eq!(found.shortcut_story_id, Some(row.id));
+    }
+
+    #[test]
+    fn find_task_by_story_external_id_none_when_story_absent() {
+        let r = repo();
+        assert!(r.find_task_by_story_external_id(404).unwrap().is_none());
     }
 }
