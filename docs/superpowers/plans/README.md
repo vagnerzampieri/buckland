@@ -11,8 +11,8 @@ Buckland v1 is split into six phases. Each phase is a self-contained plan that p
 
 | Phase | File | State | Delivers |
 |-------|------|-------|----------|
-| A | [`2026-04-22-buckland-phase-a-cli-core.md`](2026-04-22-buckland-phase-a-cli-core.md) | **ready** | CLI skeleton: `add`, `list`, `start`, `stop`, `pause`, `status`, `done`, `archive`, `delete`. Usable time-tracker via terminal. |
-| B | `2026-04-22-buckland-phase-b-shortcut.md` | **draft after A merges** | Shortcut integration (read-only): `bl add --sc`, `bl shortcut`, SC-ID resolution in `bl start`, `shortcut_stories` cache with 1h TTL. |
+| A | [`2026-04-22-buckland-phase-a-cli-core.md`](2026-04-22-buckland-phase-a-cli-core.md) | **done (2026-04-24)** | CLI skeleton: `add`, `list`, `start`, `stop`, `pause`, `status`, `done`, `archive`, `delete`. Usable time-tracker via terminal. |
+| B | [`2026-04-22-buckland-phase-b-shortcut.md`](2026-04-22-buckland-phase-b-shortcut.md) | **ready** | Shortcut integration (read-only): `bl add --sc`, `bl shortcut`, SC-ID resolution in `bl start`, `shortcut_stories` cache with 1h TTL. |
 | C | `2026-04-22-buckland-phase-c-report.md` | **draft after B merges** | `bl report` with scope (today/week/month/all), grouping (task/epic/day), Unicode block bars, `--json` dump. |
 | D | `2026-04-22-buckland-phase-d-tui.md` | **draft after C merges** | ratatui TUI: Tasks, Agenda, Report screens plus Edit and Help overlays. Full keymap. |
 | E | `2026-04-22-buckland-phase-e-tray.md` | **draft after D merges** | `bl-tray` binary with ksni + local clock tick + clipboard helper (`bl report -c`). |
