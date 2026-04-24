@@ -10,6 +10,7 @@ pub mod fetcher;
 pub mod id;
 pub mod story;
 
+pub use client::{Client, ShortcutError, DEFAULT_BASE_URL};
 pub use id::{normalize, IdError};
 pub use story::Story;
-// `Client`, `ShortcutError`, `Fetcher`, `FetcherError` are added in tasks 3 and 5.
+// `Fetcher` and `FetcherError` are added in task 5.

@@ -506,7 +506,6 @@ impl Client {
                     .and_then(|s| s.parse::<u64>().ok())
                     .map(Duration::from_secs),
             }),
-            code if (500..600).contains(&code) => Err(ShortcutError::Transient { status: code }),
             code => Err(ShortcutError::Transient { status: code }),
         }
     }
@@ -527,8 +526,6 @@ struct StoryPayload {
     id: i64,
     #[serde(default)]
     name: Option<String>,
-    #[serde(default)]
-    epic_id: Option<i64>,
     /// The workflow_state_id is always present; we don't bother turning it
     /// into a human-readable state in this phase (one extra round-trip per
     /// workspace). `Fetcher` logs a TODO comment referencing this choice.
@@ -541,9 +538,7 @@ impl StoryPayload {
         Story {
             external_id: self.id,
             title: self.name,
-            // In v1 we do not resolve epic_id -> epic_name (extra API call).
-            // We keep the slot so Phase C's --by-epic grouping has a place
-            // to deposit a real epic name once epics are fetched.
+            // In v1 we do not resolve epics; Phase C adds epic_id fetching when needed.
             epic_name: None,
             state: self.workflow_state_id.map(|id| id.to_string()),
         }
