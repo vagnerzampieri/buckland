@@ -208,41 +208,36 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 pub fn start(ctx: &mut Context, target: &str) -> anyhow::Result<i32> {
-    use crate::cli::resolve::{resolve_or_create, ResolveError, Resolved};
+    use crate::cli::resolve::{resolve_start_target, ResolveError, Resolved};
 
-    let resolved = match resolve_or_create(&mut ctx.repo, target) {
+    let resolved = match resolve_start_target(&mut ctx.repo, ctx.fetcher.as_ref(), target) {
         Ok(r) => r,
-        Err(ResolveError::TaskNotFound(id)) => {
-            println!("Task #{id} not found.");
-            return Ok(1);
-        }
-        Err(ResolveError::EmptyTarget) => {
-            println!("start target cannot be empty");
-            return Ok(1);
-        }
-        Err(ResolveError::NonPositiveId) => {
-            println!("task id must be positive");
-            return Ok(1);
-        }
         Err(ResolveError::Repo(e)) => return Err(e.into()),
+        Err(e) => {
+            // Every other ResolveError variant carries a user-ready message
+            // via Display; print it and exit 1.
+            println!("{e}");
+            return Ok(1);
+        }
     };
 
-    let task_id = match resolved {
-        Resolved::Existing(id) => id,
-        Resolved::Created(t) => t.id,
+    let task = match resolved {
+        Resolved::Existing(t) => t,
+        Resolved::Created(t) => t,
     };
-
-    let task = ctx
-        .repo
-        .find_task(task_id)?
-        .ok_or_else(|| anyhow::anyhow!("internal: resolved task #{task_id} not found"))?;
 
     if task.completed_at.is_some() {
-        println!("Task #{task_id} is done. Create a new task with `bl start \"<title>\"`.");
+        println!(
+            "Task #{} is done. Create a new task with `bl start \"<title>\"`.",
+            task.id
+        );
         return Ok(1);
     }
     if task.archived_at.is_some() {
-        println!("Task #{task_id} is archived. Create a new task with `bl start \"<title>\"`.");
+        println!(
+            "Task #{} is archived. Create a new task with `bl start \"<title>\"`.",
+            task.id
+        );
         return Ok(1);
     }
 

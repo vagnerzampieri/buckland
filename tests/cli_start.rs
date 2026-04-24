@@ -38,13 +38,15 @@ fn start_missing_numeric_errors() {
 }
 
 #[test]
-fn start_missing_id_exits_one_not_two() {
+fn start_bare_numeric_without_token_hints_at_shortcut_config() {
+    // With no shortcut token, bare "999" (no matching task id) falls through
+    // to the Shortcut path and exits 1 with a token-required message.
     let home = TempDir::new().unwrap();
     bl(&home)
         .args(["start", "999"])
         .assert()
         .code(1)
-        .stdout(contains("not found"));
+        .stdout(contains("shortcut.token"));
 }
 
 #[test]
