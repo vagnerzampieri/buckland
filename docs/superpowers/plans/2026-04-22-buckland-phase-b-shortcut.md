@@ -6,7 +6,7 @@
 
 **Architecture:** A new layer `src/shortcut/` owns three concerns: (1) ID normalization at the boundary; (2) a thin `reqwest::blocking` client with typed `thiserror` variants per HTTP failure; (3) a `Fetcher` that composes the client with the SQLite cache (cache-first, stale-on-transport-error). The CLI's `Context` gains an optional `Fetcher` built only when `config.toml` supplies a token. Existing commands (`add`, `start`, `list`) extend their surfaces; `shortcut` is a new subcommand.
 
-**Tech Stack:** `reqwest = "0.12"` with `blocking` + `rustls-tls` + `json` features; `serde_json` for response parsing; `url = "2"` for URL composition; `mockito = "1"` as the HTTP test double (sync — keeps tests free of a tokio runtime; the spec mentions wiremock "preferred" but is explicit that mockito is acceptable, and sync-only is the right trade here).
+**Tech Stack:** `reqwest = "0.12"` with `blocking` + `rustls-tls` + `json` features; `serde_json` for response parsing; `mockito = "1"` as the HTTP test double (sync — keeps tests free of a tokio runtime; the spec mentions wiremock "preferred" but is explicit that mockito is acceptable, and sync-only is the right trade here).
 
 ---
 
@@ -96,7 +96,6 @@ src/
 | JSON parsing | `serde_json` via `reqwest`'s `.json()` | Standard. No manual parsing. |
 | HTTP test double | `mockito = "1"` | Synchronous — no tokio dep for sync-only code. Listed as acceptable in spec ("wiremock preferred OR mockito"). |
 | Error enum | `thiserror` (already a dep) | Matches existing error style in `storage::RepoError`. |
-| URL composition | `url = "2"` | Safe join of base + path; prevents accidental `//`. |
 | Logging | `tracing` **not** added in this phase | Spec mentions "filter token from log formatter"; we have no logger yet. Defer until a logging phase lands. For now, release builds simply do not print request bodies. |
 
 ## Next phase
@@ -120,7 +119,6 @@ Edit `Cargo.toml`. In `[dependencies]`, append after the last entry:
 ```toml
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 serde_json = "1"
-url = "2"
 ```
 
 In `[dev-dependencies]`, append:
