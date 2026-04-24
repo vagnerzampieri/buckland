@@ -4,7 +4,8 @@ use tempfile::TempDir;
 
 fn bl(home: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("bl").unwrap();
-    cmd.env("BUCKLAND_HOME", home.path());
+    cmd.env("BUCKLAND_HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path());
     cmd
 }
 
