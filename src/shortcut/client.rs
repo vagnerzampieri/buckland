@@ -89,9 +89,7 @@ impl Client {
             code => Err(ShortcutError::Transient { status: code }),
         }
     }
-}
 
-impl Client {
     pub fn fetch_epic(&self, id: i64) -> Result<Epic, ShortcutError> {
         let url = format!(
             "{}/api/v3/epics/{}",

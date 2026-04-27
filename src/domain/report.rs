@@ -250,21 +250,9 @@ impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
             let mut cursor = e.started_at.max(scope.from);
             let cap = entry_end.min(scope.to);
             while cursor < cap {
-                let local = cursor.with_timezone(&chrono::Local);
-                let day = local.date_naive();
-                let next_local = (day.succ_opt().expect("date does not overflow"))
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight always exists");
-                let next_local_utc = chrono::Local
-                    .from_local_datetime(&next_local)
-                    .single()
-                    .unwrap_or_else(|| {
-                        chrono::Local
-                            .from_local_datetime(&next_local)
-                            .earliest()
-                            .expect("local midnight resolvable (DST-safe via .earliest())")
-                    })
-                    .with_timezone(&Utc);
+                let day = cursor.with_timezone(&chrono::Local).date_naive();
+                let next_day = day.succ_opt().expect("date does not overflow");
+                let next_local_utc = local_midnight_utc(next_day);
                 let segment_end = next_local_utc.min(cap);
                 let secs = (segment_end - cursor).num_seconds().max(0);
                 *totals
