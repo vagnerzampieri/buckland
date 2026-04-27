@@ -85,7 +85,10 @@ impl Scope {
     /// Everything ever recorded, plus a generous tail so currently-active
     /// timers count.
     pub fn all(now: DateTime<Utc>) -> Self {
-        let from = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+        let from = Utc
+            .with_ymd_and_hms(1970, 1, 1, 0, 0, 0)
+            .single()
+            .expect("Unix epoch is a valid UTC datetime");
         let to = now + Duration::days(1);
         Self {
             kind: ScopeKind::All,
@@ -132,9 +135,10 @@ fn local_midnight_utc(date: NaiveDate) -> DateTime<Utc> {
 fn next_month_first(first_of_month: NaiveDate) -> NaiveDate {
     let (y, m) = (first_of_month.year(), first_of_month.month());
     if m == 12 {
-        NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap()
+        NaiveDate::from_ymd_opt(y + 1, 1, 1).expect("Jan 1 of next year is always valid")
     } else {
-        NaiveDate::from_ymd_opt(y, m + 1, 1).unwrap()
+        NaiveDate::from_ymd_opt(y, m + 1, 1)
+            .expect("month incremented within 1..=11 is always valid")
     }
 }
 
@@ -166,7 +170,7 @@ mod tests {
         let s = Scope::week(monday);
         assert_eq!(s.kind, ScopeKind::Week);
         let width = (s.to - s.from).num_days();
-        assert!((6..=7).contains(&width), "width was {width}d");
+        assert_eq!(width, 7, "week width was {width}d, expected exactly 7");
     }
 
     #[test]
