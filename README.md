@@ -4,24 +4,24 @@ Keyboard-first time tracker for developers who use Shortcut. All-Rust, local SQL
 
 ## Status
 
-**Phase A shipped** — `bl` is a usable CLI time tracker against a local SQLite file. TUI, tray, Shortcut integration, and reports are on the roadmap.
+**Phases A, B, and C shipped** — `bl` is a usable CLI time tracker with read-only Shortcut integration and reports against a local SQLite file. TUI and tray are on the roadmap.
 
 See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown and [docs/superpowers/specs/2026-04-22-buckland-design.md](docs/superpowers/specs/2026-04-22-buckland-design.md) for the design spec.
 
 ## What works today
 
 - Full task-and-timer lifecycle from the terminal: `bl add`, `list`, `start`, `stop` / `pause`, `status`, `done`, `archive`, `delete`.
+- Shortcut integration (read-only): `bl add --sc SC-123` links a task to a story, `bl start SC-123` resumes or creates a task from a story, `bl shortcut SC-123` force-refreshes the cached story (1 h TTL).
+- Reports: `bl report` with scope flags (`--today | --week | --month | --all | --range FROM..TO`), grouping flags (`--by-task | --by-epic | --by-day`), Unicode-block bars, and `--json` for scripting.
 - Single-active-timer invariant enforced both in the schema (partial unique index) and in a transaction (`TimerOps::start` stops and starts atomically).
 - Hard delete is blocked for tasks that have time entries — the CLI suggests `archive` instead, so history is preserved by default.
 - Data lives in one SQLite file; no daemon, no HTTP surface.
-- 68 unit + integration tests, `clippy -D warnings` clean, rustfmt clean.
+- 154 unit + integration tests, `clippy -D warnings` clean, rustfmt clean.
 
 ## Coming next
 
 | Phase | Delivers |
 |-------|----------|
-| B | Shortcut integration: `bl add --sc SC-123`, `bl shortcut`, SC-ID resolution in `bl start`, 1h-TTL story cache. |
-| C | `bl report` with scope (today/week/month/all), grouping (task/epic/day), Unicode bars, `--json`. |
 | D | Ratatui TUI: Tasks, Agenda, Report screens plus Edit and Help overlays. |
 | E | `bl-tray` StatusNotifierItem icon with a local 1 Hz clock tick. |
 | F | CI, `cargo deb`, release workflow, crates.io publish. |
@@ -43,6 +43,8 @@ This installs `bl` into `~/.cargo/bin` (ensure it is on your `$PATH`). `.deb` pa
 
 ## Quickstart
 
+### Tasks and timers
+
 ```bash
 bl add "fix the login bug"
 bl add "refactor the import script"
@@ -56,6 +58,26 @@ bl list                         # only open tasks (hides #1)
 bl list --completed             # shows #1 with a ✓ glyph
 bl archive 2                    # hide from the default list; history kept
 bl list --all                   # everything, with status glyphs
+```
+
+### Shortcut integration
+
+Configure a token in `$XDG_CONFIG_HOME/buckland/config.toml` (see Configuration below), then:
+
+```bash
+bl add "ship the new auth flow" --sc SC-123   # links the task to a story
+bl start SC-123                                # resumes the linked task, or creates one
+bl shortcut SC-123                             # force-refresh the cached story metadata
+```
+
+### Reports
+
+```bash
+bl report                                     # today, by task — table with Unicode bars
+bl report --week --by-day                     # this ISO week, one row per local day
+bl report --month --by-epic                   # this calendar month, grouped by Shortcut epic
+bl report --range 2026-04-01..2026-04-30      # custom date range, inclusive endpoints
+bl report --all --json | jq                   # machine-readable dump for scripting
 ```
 
 Use `bl <command> --help` for flag details on any subcommand.
@@ -79,7 +101,8 @@ bl add "scratch task"
 
 ```toml
 [shortcut]
-# token = "abc..."              # Phase B
+# token = "abc..."              # required for bl add --sc, bl start SC-NNN, bl shortcut, bl report --by-epic
+# api_base_url = "https://api.app.shortcut.com"  # override only for testing
 
 [ui]
 icons = "unicode"               # or "ascii"
