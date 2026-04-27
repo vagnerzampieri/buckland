@@ -142,7 +142,116 @@ fn next_month_first(first_of_month: NaiveDate) -> NaiveDate {
     }
 }
 
-// ReportBuilder, Report, ReportRow live here too — added in later tasks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Report {
+    pub scope: Scope,
+    pub grouping: Grouping,
+    pub rows: Vec<ReportRow>,
+    pub total_seconds: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReportRow {
+    pub label: String,
+    pub duration_seconds: i64,
+    /// `Some` only when [`Grouping::Task`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<i64>,
+    /// `Some` only when [`Grouping::Task`] and the task links to a Shortcut story.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shortcut_external_id: Option<i64>,
+    /// `Some` only when [`Grouping::Day`]. Format: YYYY-MM-DD (Local).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+}
+
+pub struct ReportBuilder<'a, R: crate::storage::Repo> {
+    repo: &'a R,
+}
+
+impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
+    pub fn new(repo: &'a R) -> Self {
+        Self { repo }
+    }
+
+    pub fn build(
+        &self,
+        scope: Scope,
+        grouping: Grouping,
+        now: DateTime<Utc>,
+    ) -> Result<Report, crate::storage::RepoError> {
+        match grouping {
+            Grouping::Task => self.build_by_task(scope, now),
+            Grouping::Epic => Err(crate::storage::RepoError::Sqlite(
+                rusqlite::Error::InvalidQuery,
+            )), // filled in by Task 10
+            Grouping::Day => Err(crate::storage::RepoError::Sqlite(
+                rusqlite::Error::InvalidQuery,
+            )), // filled in by Task 8
+        }
+    }
+
+    fn build_by_task(
+        &self,
+        scope: Scope,
+        now: DateTime<Utc>,
+    ) -> Result<Report, crate::storage::RepoError> {
+        let entries = self.repo.list_entries_in_range(scope.from, scope.to, now)?;
+
+        // task_id -> accumulated seconds
+        let mut totals: std::collections::BTreeMap<i64, i64> = std::collections::BTreeMap::new();
+        for e in &entries {
+            let contribution = contribution_seconds(e, scope.from, scope.to, now);
+            *totals.entry(e.task_id).or_default() += contribution;
+        }
+
+        let mut rows = Vec::with_capacity(totals.len());
+        for (task_id, secs) in totals.iter() {
+            let task = self
+                .repo
+                .find_task(*task_id)?
+                .ok_or(crate::storage::RepoError::TaskNotFound(*task_id))?;
+            let shortcut_external_id = match task.shortcut_story_id {
+                Some(row_id) => self
+                    .repo
+                    .find_shortcut_story_by_row_id(row_id)?
+                    .map(|s| s.external_id),
+                None => None,
+            };
+            let label = match shortcut_external_id {
+                Some(ext) => format!("SC-{ext} {}", task.title),
+                None => task.title.clone(),
+            };
+            rows.push(ReportRow {
+                label,
+                duration_seconds: *secs,
+                task_id: Some(task.id),
+                shortcut_external_id,
+                date: None,
+            });
+        }
+        rows.sort_by(|a, b| b.duration_seconds.cmp(&a.duration_seconds));
+        let total_seconds = rows.iter().map(|r| r.duration_seconds).sum();
+        Ok(Report {
+            scope,
+            grouping: Grouping::Task,
+            rows,
+            total_seconds,
+        })
+    }
+}
+
+fn contribution_seconds(
+    entry: &crate::domain::TimeEntry,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> i64 {
+    let entry_end = entry.ended_at.unwrap_or(now);
+    let start = entry.started_at.max(from);
+    let end = entry_end.min(to);
+    (end - start).max(Duration::zero()).num_seconds()
+}
 
 #[cfg(test)]
 mod tests {
@@ -229,5 +338,149 @@ mod tests {
             Scope::range("2026-04-30..2026-04-01"),
             Err(ScopeError::RangeOrder { .. })
         ));
+    }
+
+    use crate::storage::SqliteRepo;
+
+    fn seed_closed_entry(
+        r: &mut SqliteRepo,
+        task_id: i64,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) {
+        use crate::storage::Repo;
+        let e = r.create_time_entry(task_id, start).unwrap();
+        r.end_time_entry(e.id, end).unwrap();
+    }
+
+    #[test]
+    fn build_by_task_aggregates_per_task_within_scope() {
+        use crate::storage::Repo;
+        let mut r = SqliteRepo::in_memory();
+        let t1 = r.create_task("alpha", None).unwrap();
+        let t2 = r.create_task("beta", None).unwrap();
+
+        let from = at(2026, 4, 22, 0);
+        let to = at(2026, 4, 23, 0);
+        let now = at(2026, 4, 22, 18);
+
+        // Two closed entries on t1, totalling 90 minutes.
+        seed_closed_entry(&mut r, t1.id, at(2026, 4, 22, 9), at(2026, 4, 22, 10));
+        seed_closed_entry(
+            &mut r,
+            t1.id,
+            at(2026, 4, 22, 11),
+            at(2026, 4, 22, 11) + Duration::minutes(30),
+        );
+        // One closed entry on t2, 30 minutes.
+        seed_closed_entry(
+            &mut r,
+            t2.id,
+            at(2026, 4, 22, 13),
+            at(2026, 4, 22, 13) + Duration::minutes(30),
+        );
+
+        let scope = Scope {
+            kind: ScopeKind::Today,
+            from,
+            to,
+        };
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Task, now)
+            .unwrap();
+        assert_eq!(report.rows.len(), 2);
+        // Sorted descending by duration: t1 first.
+        assert_eq!(report.rows[0].task_id, Some(t1.id));
+        assert_eq!(report.rows[0].duration_seconds, 90 * 60);
+        assert_eq!(report.rows[1].task_id, Some(t2.id));
+        assert_eq!(report.rows[1].duration_seconds, 30 * 60);
+        assert_eq!(report.total_seconds, 120 * 60);
+        assert_eq!(report.grouping, Grouping::Task);
+    }
+
+    #[test]
+    fn build_by_task_clamps_entries_to_scope_window() {
+        use crate::storage::Repo;
+        let mut r = SqliteRepo::in_memory();
+        let t = r.create_task("over the edge", None).unwrap();
+
+        let from = at(2026, 4, 22, 0);
+        let to = at(2026, 4, 23, 0);
+        let now = at(2026, 4, 22, 18);
+
+        // Entry started yesterday at 23:00, ended today at 02:00 — only the 2h on the
+        // today side should count.
+        seed_closed_entry(&mut r, t.id, at(2026, 4, 21, 23), at(2026, 4, 22, 2));
+
+        let scope = Scope {
+            kind: ScopeKind::Today,
+            from,
+            to,
+        };
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Task, now)
+            .unwrap();
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].duration_seconds, 2 * 3600);
+    }
+
+    #[test]
+    fn build_by_task_counts_active_entry_up_to_now() {
+        use crate::storage::Repo;
+        let mut r = SqliteRepo::in_memory();
+        let t = r.create_task("active", None).unwrap();
+        let from = at(2026, 4, 22, 0);
+        let to = at(2026, 4, 23, 0);
+        let now = at(2026, 4, 22, 14);
+
+        // Active entry started at 13:00, no end. Now is 14:00 → 1h should count.
+        r.create_time_entry(t.id, at(2026, 4, 22, 13)).unwrap();
+
+        let scope = Scope {
+            kind: ScopeKind::Today,
+            from,
+            to,
+        };
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Task, now)
+            .unwrap();
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].duration_seconds, 3600);
+    }
+
+    #[test]
+    fn build_by_task_includes_shortcut_external_id_when_linked() {
+        use crate::shortcut::Story;
+        use crate::storage::Repo;
+        let mut r = SqliteRepo::in_memory();
+        // NOTE: `Story` does not yet have `epic_id` in this task — Task 9 adds
+        // it and updates this fixture to set `epic_id: None`. Do not include
+        // the field here; the test would not compile until Task 9 runs.
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 555,
+                    title: Some("from sc".into()),
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let t = r.create_task("linked", None).unwrap();
+        r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
+        seed_closed_entry(&mut r, t.id, at(2026, 4, 22, 10), at(2026, 4, 22, 11));
+
+        let scope = Scope {
+            kind: ScopeKind::Today,
+            from: at(2026, 4, 22, 0),
+            to: at(2026, 4, 23, 0),
+        };
+        let now = at(2026, 4, 22, 12);
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Task, now)
+            .unwrap();
+        assert_eq!(report.rows[0].shortcut_external_id, Some(555));
+        assert!(report.rows[0].label.starts_with("SC-555 "));
     }
 }
