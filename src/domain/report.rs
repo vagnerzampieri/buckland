@@ -509,14 +509,12 @@ mod tests {
         use crate::shortcut::Story;
         use crate::storage::Repo;
         let mut r = SqliteRepo::in_memory();
-        // NOTE: `Story` does not yet have `epic_id` in this task — Task 9 adds
-        // it and updates this fixture to set `epic_id: None`. Do not include
-        // the field here; the test would not compile until Task 9 runs.
         let row = r
             .upsert_shortcut_story(
                 &Story {
                     external_id: 555,
                     title: Some("from sc".into()),
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },

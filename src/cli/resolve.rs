@@ -160,6 +160,7 @@ mod tests {
                 &Story {
                     external_id: 9,
                     title: Some("cached".into()),
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },

@@ -35,6 +35,16 @@ impl Fetcher {
         Self { client }
     }
 
+    fn fetch_and_resolve(&self, external_id: i64) -> Result<crate::shortcut::Story, FetcherError> {
+        let mut story = self.client.fetch_story(external_id)?;
+        if let (Some(epic_id), None) = (story.epic_id, story.epic_name.as_ref()) {
+            // epic_id present, epic_name not yet resolved → fetch.
+            let epic = self.client.fetch_epic(epic_id)?;
+            story.epic_name = Some(epic.name);
+        }
+        Ok(story)
+    }
+
     /// Cache-first get. Returns cached row if fresh; otherwise refreshes.
     /// If the refresh fails but a (stale) cached row exists, returns that
     /// with `is_stale: true`. A 404 from upstream always propagates.
@@ -53,7 +63,7 @@ impl Fetcher {
             }
             // Stale cache; try a refresh, fall back to the stale row on
             // transport failure.
-            match self.client.fetch_story(external_id) {
+            match self.fetch_and_resolve(external_id) {
                 Ok(fresh) => {
                     let saved = repo.upsert_shortcut_story(&fresh, now)?;
                     Ok(Cached {
@@ -61,14 +71,16 @@ impl Fetcher {
                         is_stale: false,
                     })
                 }
-                Err(ShortcutError::NotFound) => Err(ShortcutError::NotFound.into()),
+                Err(FetcherError::Shortcut(ShortcutError::NotFound)) => {
+                    Err(ShortcutError::NotFound.into())
+                }
                 Err(_) => Ok(Cached {
                     story: row,
                     is_stale: true,
                 }),
             }
         } else {
-            let fresh = self.client.fetch_story(external_id)?;
+            let fresh = self.fetch_and_resolve(external_id)?;
             let saved = repo.upsert_shortcut_story(&fresh, now)?;
             Ok(Cached {
                 story: saved,
@@ -84,7 +96,7 @@ impl Fetcher {
         external_id: i64,
         now: DateTime<Utc>,
     ) -> Result<ShortcutStory, FetcherError> {
-        let fresh = self.client.fetch_story(external_id)?;
+        let fresh = self.fetch_and_resolve(external_id)?;
         Ok(repo.upsert_shortcut_story(&fresh, now)?)
     }
 }
@@ -113,6 +125,7 @@ mod tests {
             &Story {
                 external_id: 10,
                 title: Some("cached".into()),
+                epic_id: None,
                 epic_name: None,
                 state: None,
             },
@@ -161,6 +174,7 @@ mod tests {
             &Story {
                 external_id: 30,
                 title: Some("old".into()),
+                epic_id: None,
                 epic_name: None,
                 state: None,
             },
@@ -187,6 +201,7 @@ mod tests {
             &Story {
                 external_id: 40,
                 title: Some("survivor".into()),
+                epic_id: None,
                 epic_name: None,
                 state: None,
             },
@@ -213,6 +228,7 @@ mod tests {
             &Story {
                 external_id: 50,
                 title: Some("ghost".into()),
+                epic_id: None,
                 epic_name: None,
                 state: None,
             },
@@ -258,6 +274,7 @@ mod tests {
             &Story {
                 external_id: 70,
                 title: Some("stale-on-purpose".into()),
+                epic_id: None,
                 epic_name: None,
                 state: None,
             },
@@ -267,5 +284,28 @@ mod tests {
 
         let row = fetcher.refresh(&mut repo, 70, now).unwrap();
         assert_eq!(row.title.as_deref(), Some("forced"));
+    }
+
+    #[test]
+    fn get_resolves_epic_name_on_fresh_fetch() {
+        let mut server = Server::new();
+        let _story = server
+            .mock("GET", "/api/v3/stories/77")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":77,"name":"With epic","workflow_state_id":1,"epic_id":9}"#)
+            .create();
+        let _epic = server
+            .mock("GET", "/api/v3/epics/9")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":9,"name":"Auth refactor"}"#)
+            .create();
+        let client = Client::new(server.url(), "tok");
+        let fetcher = Fetcher::new(client);
+        let mut repo = SqliteRepo::in_memory();
+        let now = Utc::now();
+        let cached = fetcher.get(&mut repo, 77, now).unwrap();
+        assert_eq!(cached.story.epic_name.as_deref(), Some("Auth refactor"));
     }
 }

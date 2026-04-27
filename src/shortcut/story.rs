@@ -7,6 +7,9 @@
 pub struct Story {
     pub external_id: i64,
     pub title: Option<String>,
+    /// Shortcut epic id, when the story is attached to one. Transient — not
+    /// persisted in `shortcut_stories` (we resolve `epic_name` at fetch time).
+    pub epic_id: Option<i64>,
     pub epic_name: Option<String>,
     pub state: Option<String>,
 }

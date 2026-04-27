@@ -516,6 +516,7 @@ mod tests {
         let s1 = Story {
             external_id: 42,
             title: Some("first".into()),
+            epic_id: None,
             epic_name: None,
             state: None,
         };
@@ -527,6 +528,7 @@ mod tests {
         let s2 = Story {
             external_id: 42,
             title: Some("second".into()),
+            epic_id: None,
             epic_name: Some("Epic X".into()),
             state: Some("backlog".into()),
         };
@@ -553,6 +555,7 @@ mod tests {
                 &Story {
                     external_id: 7,
                     title: Some("story".into()),
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },
@@ -572,6 +575,7 @@ mod tests {
                 &Story {
                     external_id: 1,
                     title: None,
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },
@@ -593,6 +597,7 @@ mod tests {
                 &Story {
                     external_id: 88,
                     title: Some("s".into()),
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },
@@ -621,6 +626,7 @@ mod tests {
                 &Story {
                     external_id: 77,
                     title: Some("x".into()),
+                    epic_id: None,
                     epic_name: None,
                     state: None,
                 },

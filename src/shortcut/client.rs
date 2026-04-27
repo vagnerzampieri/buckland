@@ -91,6 +91,63 @@ impl Client {
     }
 }
 
+impl Client {
+    pub fn fetch_epic(&self, id: i64) -> Result<Epic, ShortcutError> {
+        let url = format!(
+            "{}/api/v3/epics/{}",
+            self.base_url.trim_end_matches('/'),
+            id
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header("Shortcut-Token", &self.token)
+            .header("Accept", "application/json")
+            .send()
+            .map_err(map_transport_error)?;
+
+        let status = resp.status();
+        if status.is_success() {
+            let payload: EpicPayload = resp
+                .json()
+                .map_err(|e| ShortcutError::MalformedResponse(e.to_string()))?;
+            return Ok(Epic {
+                id: payload.id,
+                name: payload.name,
+            });
+        }
+
+        match status.as_u16() {
+            401 | 403 => Err(ShortcutError::Auth(format!(
+                "token rejected (status {})",
+                status.as_u16()
+            ))),
+            404 => Err(ShortcutError::NotFound),
+            429 => Err(ShortcutError::RateLimited {
+                retry_after: resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(Duration::from_secs),
+            }),
+            code => Err(ShortcutError::Transient { status: code }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Epic {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EpicPayload {
+    id: i64,
+    name: String,
+}
+
 fn map_transport_error(e: reqwest::Error) -> ShortcutError {
     if e.is_timeout() {
         ShortcutError::Timeout
@@ -111,14 +168,17 @@ struct StoryPayload {
     /// workspace). `Fetcher` logs a TODO comment referencing this choice.
     #[serde(default)]
     workflow_state_id: Option<i64>,
+    #[serde(default)]
+    epic_id: Option<i64>,
 }
 
 impl StoryPayload {
+    // epic_name is filled in by Fetcher::resolve_epic.
     fn into_story(self) -> Story {
         Story {
             external_id: self.id,
             title: self.name,
-            // In v1 we do not resolve epics; Phase C adds epic_id fetching when needed.
+            epic_id: self.epic_id,
             epic_name: None,
             state: self.workflow_state_id.map(|id| id.to_string()),
         }
@@ -149,6 +209,7 @@ mod tests {
         assert_eq!(story.external_id, 123);
         assert_eq!(story.title.as_deref(), Some("Fix login"));
         assert_eq!(story.state.as_deref(), Some("500000001"));
+        assert_eq!(story.epic_id, Some(9));
         assert_eq!(story.epic_name, None);
     }
 
@@ -283,5 +344,35 @@ mod tests {
             .create();
         let client = mocked(&server, "super-secret");
         assert!(client.fetch_story(1).is_ok());
+    }
+
+    #[test]
+    fn fetch_epic_success() {
+        let mut server = Server::new();
+        let _m = server
+            .mock("GET", "/api/v3/epics/9")
+            .match_header("Shortcut-Token", "abc")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":9,"name":"Auth refactor"}"#)
+            .create();
+        let client = mocked(&server, "abc");
+        let epic = client.fetch_epic(9).unwrap();
+        assert_eq!(epic.id, 9);
+        assert_eq!(epic.name, "Auth refactor");
+    }
+
+    #[test]
+    fn fetch_epic_404_maps_to_not_found() {
+        let mut server = Server::new();
+        let _m = server
+            .mock("GET", "/api/v3/epics/404")
+            .with_status(404)
+            .create();
+        let client = mocked(&server, "abc");
+        assert!(matches!(
+            client.fetch_epic(404).unwrap_err(),
+            ShortcutError::NotFound
+        ));
     }
 }
