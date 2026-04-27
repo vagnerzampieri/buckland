@@ -48,6 +48,17 @@ pub trait Repo {
     fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration>;
     fn delete_time_entry(&mut self, id: i64) -> RepoResult<()>;
 
+    /// All time entries whose `[started_at, ended_at_or_now)` interval
+    /// overlaps the half-open UTC range `[from, to)`.
+    /// Active entries (where `ended_at IS NULL`) are evaluated against `now`.
+    /// Ordered by `started_at ASC`.
+    fn list_entries_in_range(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> RepoResult<Vec<TimeEntry>>;
+
     fn upsert_shortcut_story(
         &mut self,
         story: &Story,
@@ -297,6 +308,26 @@ impl Repo for SqliteRepo {
             return Err(RepoError::TimeEntryNotFound(id));
         }
         Ok(())
+    }
+
+    fn list_entries_in_range(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> RepoResult<Vec<TimeEntry>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TIME_ENTRY_COLS} FROM time_entries \
+             WHERE started_at < ?1 \
+               AND COALESCE(ended_at, ?2) > ?3 \
+             ORDER BY started_at ASC"
+        ))?;
+        let rows = stmt.query_map(params![to, now, from], |row| TimeEntry::try_from(row))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     fn upsert_shortcut_story(
@@ -599,5 +630,76 @@ mod tests {
         let found = r.find_shortcut_story_by_row_id(row.id).unwrap().unwrap();
         assert_eq!(found.external_id, 77);
         assert!(r.find_shortcut_story_by_row_id(9999).unwrap().is_none());
+    }
+
+    #[test]
+    fn list_entries_in_range_includes_overlapping_entries() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        // Closed entry 09:00–09:30
+        let a = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 9, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(a.id, Utc.with_ymd_and_hms(2026, 4, 22, 9, 30, 0).unwrap())
+            .unwrap();
+        // Closed entry 10:00–11:00, fully inside the day
+        let b = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(b.id, Utc.with_ymd_and_hms(2026, 4, 22, 11, 0, 0).unwrap())
+            .unwrap();
+        // Closed entry on the next day, must not appear in the 22nd window
+        let c = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 23, 9, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(c.id, Utc.with_ymd_and_hms(2026, 4, 23, 9, 15, 0).unwrap())
+            .unwrap();
+
+        let from = Utc.with_ymd_and_hms(2026, 4, 22, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+        let entries = r.list_entries_in_range(from, to, now).unwrap();
+        let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![a.id, b.id]);
+    }
+
+    #[test]
+    fn list_entries_in_range_includes_active_entry_started_before_range_end() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        // Active entry started inside the window.
+        let active = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 14, 0, 0).unwrap())
+            .unwrap();
+
+        let from = Utc.with_ymd_and_hms(2026, 4, 22, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 4, 22, 16, 0, 0).unwrap();
+        let entries = r.list_entries_in_range(from, to, now).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, active.id);
+        assert!(entries[0].is_active());
+    }
+
+    #[test]
+    fn list_entries_in_range_excludes_entries_ending_before_range() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        let earlier = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 21, 9, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(
+            earlier.id,
+            Utc.with_ymd_and_hms(2026, 4, 21, 10, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let from = Utc.with_ymd_and_hms(2026, 4, 22, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap();
+        let entries = r.list_entries_in_range(from, to, now).unwrap();
+        assert!(entries.is_empty());
     }
 }
