@@ -30,5 +30,29 @@ pub fn run() -> anyhow::Result<i32> {
         Commands::Done { id } => commands::done(&mut ctx, id),
         Commands::Archive { id } => commands::archive(&mut ctx, id),
         Commands::Delete { id } => commands::delete(&mut ctx, id),
+        Commands::Report {
+            today,
+            week,
+            month,
+            all,
+            range,
+            by_task,
+            by_epic,
+            by_day,
+            json,
+        } => commands::report(
+            &mut ctx,
+            commands::ReportArgs {
+                today,
+                week,
+                month,
+                all,
+                range,
+                by_task,
+                by_epic,
+                by_day,
+                json,
+            },
+        ),
     }
 }

@@ -16,7 +16,26 @@ fn help_shows_subcommands() {
         .stdout(contains("status"))
         .stdout(contains("done"))
         .stdout(contains("archive"))
-        .stdout(contains("delete"));
+        .stdout(contains("delete"))
+        .stdout(contains("report"));
+}
+
+#[test]
+fn report_help_lists_flags() {
+    Command::cargo_bin("bl")
+        .unwrap()
+        .args(["report", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--today"))
+        .stdout(contains("--week"))
+        .stdout(contains("--month"))
+        .stdout(contains("--all"))
+        .stdout(contains("--range"))
+        .stdout(contains("--by-task"))
+        .stdout(contains("--by-epic"))
+        .stdout(contains("--by-day"))
+        .stdout(contains("--json"));
 }
 
 #[test]

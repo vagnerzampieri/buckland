@@ -67,4 +67,34 @@ pub enum Commands {
         /// Story id: "SC-123", "sc-123", or "123".
         id: String,
     },
+    /// Report time totals over a scope, grouped by task / epic / day.
+    Report {
+        /// Time tracked today (default).
+        #[arg(long, group = "scope")]
+        today: bool,
+        /// Time tracked in the current ISO week (Monday–Sunday, local).
+        #[arg(long, group = "scope")]
+        week: bool,
+        /// Time tracked in the current calendar month (local).
+        #[arg(long, group = "scope")]
+        month: bool,
+        /// Time tracked across the entire database.
+        #[arg(long, group = "scope")]
+        all: bool,
+        /// Custom range FROM..TO with both endpoints as YYYY-MM-DD (inclusive).
+        #[arg(long, group = "scope", value_name = "FROM..TO")]
+        range: Option<String>,
+        /// Group rows by task (default).
+        #[arg(long, group = "grouping")]
+        by_task: bool,
+        /// Group rows by Shortcut epic (uses cached epic_name).
+        #[arg(long, group = "grouping")]
+        by_epic: bool,
+        /// Group rows by local calendar day.
+        #[arg(long, group = "grouping")]
+        by_day: bool,
+        /// Emit a JSON object instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
 }
