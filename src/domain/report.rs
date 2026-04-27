@@ -183,9 +183,7 @@ impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
         match grouping {
             Grouping::Task => self.build_by_task(scope, now),
             Grouping::Day => self.build_by_day(scope, now),
-            Grouping::Epic => Err(crate::storage::RepoError::Sqlite(
-                rusqlite::Error::InvalidQuery,
-            )), // filled in by Task 10
+            Grouping::Epic => self.build_by_epic(scope, now),
         }
     }
 
@@ -291,6 +289,58 @@ impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
         Ok(Report {
             scope,
             grouping: Grouping::Day,
+            rows,
+            total_seconds,
+        })
+    }
+
+    fn build_by_epic(
+        &self,
+        scope: Scope,
+        now: DateTime<Utc>,
+    ) -> Result<Report, crate::storage::RepoError> {
+        let entries = self.repo.list_entries_in_range(scope.from, scope.to, now)?;
+
+        // task_id -> seconds (intermediate)
+        let mut per_task: std::collections::BTreeMap<i64, i64> = std::collections::BTreeMap::new();
+        for e in &entries {
+            *per_task.entry(e.task_id).or_default() +=
+                contribution_seconds(e, scope.from, scope.to, now);
+        }
+
+        // epic_label -> seconds (final)
+        let mut per_epic: std::collections::BTreeMap<String, i64> =
+            std::collections::BTreeMap::new();
+        for (task_id, secs) in per_task {
+            let task = self
+                .repo
+                .find_task(task_id)?
+                .ok_or(crate::storage::RepoError::TaskNotFound(task_id))?;
+            let label = match task.shortcut_story_id {
+                Some(row_id) => match self.repo.find_shortcut_story_by_row_id(row_id)? {
+                    Some(s) => s.epic_name.unwrap_or_else(|| "(no epic)".to_string()),
+                    None => "(no epic)".to_string(),
+                },
+                None => "(no epic)".to_string(),
+            };
+            *per_epic.entry(label).or_default() += secs;
+        }
+
+        let mut rows: Vec<ReportRow> = per_epic
+            .into_iter()
+            .map(|(label, seconds)| ReportRow {
+                label,
+                duration_seconds: seconds,
+                task_id: None,
+                shortcut_external_id: None,
+                date: None,
+            })
+            .collect();
+        rows.sort_by(|a, b| b.duration_seconds.cmp(&a.duration_seconds));
+        let total_seconds = rows.iter().map(|r| r.duration_seconds).sum();
+        Ok(Report {
+            scope,
+            grouping: Grouping::Epic,
             rows,
             total_seconds,
         })
@@ -536,6 +586,97 @@ mod tests {
             .unwrap();
         assert_eq!(report.rows[0].shortcut_external_id, Some(555));
         assert!(report.rows[0].label.starts_with("SC-555 "));
+    }
+
+    #[test]
+    fn build_by_epic_groups_tasks_by_epic_name() {
+        use crate::shortcut::Story;
+        use crate::storage::Repo;
+
+        let mut r = SqliteRepo::in_memory();
+        let alpha_row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 1,
+                    title: Some("alpha".into()),
+                    epic_id: Some(9),
+                    epic_name: Some("Auth".into()),
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let beta_row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 2,
+                    title: Some("beta".into()),
+                    epic_id: Some(9),
+                    epic_name: Some("Auth".into()),
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let gamma_row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 3,
+                    title: Some("gamma".into()),
+                    epic_id: None,
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+
+        let t_alpha = r.create_task("alpha task", None).unwrap();
+        let t_beta = r.create_task("beta task", None).unwrap();
+        let t_gamma = r.create_task("gamma task", None).unwrap();
+        let t_loose = r.create_task("loose task", None).unwrap();
+        r.link_task_to_story(t_alpha.id, alpha_row.id, Utc::now())
+            .unwrap();
+        r.link_task_to_story(t_beta.id, beta_row.id, Utc::now())
+            .unwrap();
+        r.link_task_to_story(t_gamma.id, gamma_row.id, Utc::now())
+            .unwrap();
+
+        seed_closed_entry(&mut r, t_alpha.id, at(2026, 4, 22, 9), at(2026, 4, 22, 10));
+        seed_closed_entry(
+            &mut r,
+            t_beta.id,
+            at(2026, 4, 22, 10),
+            at(2026, 4, 22, 10) + Duration::minutes(30),
+        );
+        seed_closed_entry(
+            &mut r,
+            t_gamma.id,
+            at(2026, 4, 22, 11),
+            at(2026, 4, 22, 11) + Duration::minutes(15),
+        );
+        seed_closed_entry(
+            &mut r,
+            t_loose.id,
+            at(2026, 4, 22, 12),
+            at(2026, 4, 22, 12) + Duration::minutes(20),
+        );
+
+        let scope = Scope {
+            kind: ScopeKind::Today,
+            from: at(2026, 4, 22, 0),
+            to: at(2026, 4, 23, 0),
+        };
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Epic, at(2026, 4, 22, 18))
+            .unwrap();
+
+        // "Auth" gets t_alpha (60m) + t_beta (30m) = 90m. "(no epic)" gets gamma (15m) + loose (20m) = 35m.
+        assert_eq!(report.rows.len(), 2);
+        assert_eq!(report.rows[0].label, "Auth");
+        assert_eq!(report.rows[0].duration_seconds, 90 * 60);
+        assert_eq!(report.rows[1].label, "(no epic)");
+        assert_eq!(report.rows[1].duration_seconds, 35 * 60);
     }
 
     #[test]
