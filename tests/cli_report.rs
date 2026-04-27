@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use chrono::{Duration, Local, TimeZone, Utc};
+use chrono::{Datelike, Duration, Local, TimeZone, Utc};
 use predicates::str::contains;
 use rusqlite::params;
 use tempfile::TempDir;
@@ -83,4 +83,106 @@ fn default_report_groups_by_task_today() {
         .stdout(contains("beta"))
         .stdout(contains("1h 30m"))
         .stdout(contains("Total"));
+}
+
+#[test]
+fn week_scope_includes_an_entry_from_earlier_this_week() {
+    let home = TempDir::new().unwrap();
+    bl(&home)
+        .args(["add", "earlier this week"])
+        .assert()
+        .success();
+
+    // Seed an entry at Monday 09:00 of the current week. This is always
+    // within the ISO week window regardless of what day of the week today is.
+    let local_today = Local::now().date_naive();
+    let days_since_monday = local_today.weekday().num_days_from_monday() as i64;
+    let monday = local_today - Duration::days(days_since_monday);
+    let monday_9am = Local
+        .from_local_datetime(&monday.and_hms_opt(9, 0, 0).unwrap())
+        .single()
+        .unwrap()
+        .with_timezone(&Utc);
+    seed_closed_entry(&home, 1, monday_9am, monday_9am + Duration::minutes(45));
+
+    bl(&home)
+        .args(["report", "--week"])
+        .assert()
+        .success()
+        .stdout(contains("earlier this week"))
+        .stdout(contains("45m"));
+}
+
+#[test]
+fn month_scope_works() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "anytime"]).assert().success();
+    seed_closed_entry(
+        &home,
+        1,
+        local_today_at(9, 0) - Duration::days(2),
+        local_today_at(9, 0) - Duration::days(2) + Duration::minutes(20),
+    );
+
+    bl(&home)
+        .args(["report", "--month"])
+        .assert()
+        .success()
+        .stdout(contains("anytime"));
+}
+
+#[test]
+fn all_scope_includes_very_old_entries() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "ancient"]).assert().success();
+    let long_ago = Utc.with_ymd_and_hms(2020, 1, 1, 9, 0, 0).unwrap();
+    seed_closed_entry(&home, 1, long_ago, long_ago + Duration::minutes(10));
+
+    bl(&home)
+        .args(["report", "--all"])
+        .assert()
+        .success()
+        .stdout(contains("ancient"));
+}
+
+#[test]
+fn range_scope_filters_to_the_window() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "in window"]).assert().success();
+    bl(&home).args(["add", "out window"]).assert().success();
+
+    let in_window = Utc.with_ymd_and_hms(2026, 3, 15, 10, 0, 0).unwrap();
+    let out_window = Utc.with_ymd_and_hms(2026, 4, 15, 10, 0, 0).unwrap();
+    seed_closed_entry(&home, 1, in_window, in_window + Duration::minutes(30));
+    seed_closed_entry(&home, 2, out_window, out_window + Duration::minutes(30));
+
+    bl(&home)
+        .args(["report", "--range", "2026-03-01..2026-03-31"])
+        .assert()
+        .success()
+        .stdout(contains("in window"))
+        .stdout(predicates::prelude::PredicateBooleanExt::not(contains(
+            "out window",
+        )));
+}
+
+#[test]
+fn range_with_bad_shape_exits_one() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "noop"]).assert().success();
+    bl(&home)
+        .args(["report", "--range", "garbage"])
+        .assert()
+        .code(1)
+        .stdout(contains("range"));
+}
+
+#[test]
+fn scope_flags_are_mutually_exclusive() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "noop"]).assert().success();
+    bl(&home)
+        .args(["report", "--today", "--week"])
+        .assert()
+        .failure();
 }
