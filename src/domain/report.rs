@@ -182,12 +182,10 @@ impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
     ) -> Result<Report, crate::storage::RepoError> {
         match grouping {
             Grouping::Task => self.build_by_task(scope, now),
+            Grouping::Day => self.build_by_day(scope, now),
             Grouping::Epic => Err(crate::storage::RepoError::Sqlite(
                 rusqlite::Error::InvalidQuery,
             )), // filled in by Task 10
-            Grouping::Day => Err(crate::storage::RepoError::Sqlite(
-                rusqlite::Error::InvalidQuery,
-            )), // filled in by Task 8
         }
     }
 
@@ -235,6 +233,64 @@ impl<'a, R: crate::storage::Repo> ReportBuilder<'a, R> {
         Ok(Report {
             scope,
             grouping: Grouping::Task,
+            rows,
+            total_seconds,
+        })
+    }
+
+    fn build_by_day(
+        &self,
+        scope: Scope,
+        now: DateTime<Utc>,
+    ) -> Result<Report, crate::storage::RepoError> {
+        let entries = self.repo.list_entries_in_range(scope.from, scope.to, now)?;
+
+        // Day key (Local YYYY-MM-DD) → seconds.
+        let mut totals: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        for e in &entries {
+            let entry_end = e.ended_at.unwrap_or(now);
+            let mut cursor = e.started_at.max(scope.from);
+            let cap = entry_end.min(scope.to);
+            while cursor < cap {
+                let local = cursor.with_timezone(&chrono::Local);
+                let day = local.date_naive();
+                let next_local = (day.succ_opt().expect("date does not overflow"))
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight always exists");
+                let next_local_utc = chrono::Local
+                    .from_local_datetime(&next_local)
+                    .single()
+                    .unwrap_or_else(|| {
+                        chrono::Local
+                            .from_local_datetime(&next_local)
+                            .earliest()
+                            .expect("local midnight resolvable (DST-safe via .earliest())")
+                    })
+                    .with_timezone(&Utc);
+                let segment_end = next_local_utc.min(cap);
+                let secs = (segment_end - cursor).num_seconds().max(0);
+                *totals
+                    .entry(day.format("%Y-%m-%d").to_string())
+                    .or_default() += secs;
+                cursor = segment_end;
+            }
+        }
+
+        let mut rows: Vec<ReportRow> = totals
+            .into_iter()
+            .map(|(label, seconds)| ReportRow {
+                label: label.clone(),
+                duration_seconds: seconds,
+                task_id: None,
+                shortcut_external_id: None,
+                date: Some(label),
+            })
+            .collect();
+        rows.sort_by(|a, b| b.duration_seconds.cmp(&a.duration_seconds));
+        let total_seconds = rows.iter().map(|r| r.duration_seconds).sum();
+        Ok(Report {
+            scope,
+            grouping: Grouping::Day,
             rows,
             total_seconds,
         })
@@ -482,5 +538,44 @@ mod tests {
             .unwrap();
         assert_eq!(report.rows[0].shortcut_external_id, Some(555));
         assert!(report.rows[0].label.starts_with("SC-555 "));
+    }
+
+    #[test]
+    fn build_by_day_buckets_entries_by_local_date() {
+        use crate::storage::Repo;
+        let mut r = SqliteRepo::in_memory();
+        let t = r.create_task("t", None).unwrap();
+
+        // Two entries on the 22nd, one on the 23rd. All in UTC; the test
+        // assumes the runner's local zone is the same as the chosen UTC days
+        // for these specific hours (mid-day → not on the boundary).
+        seed_closed_entry(&mut r, t.id, at(2026, 4, 22, 12), at(2026, 4, 22, 13));
+        seed_closed_entry(
+            &mut r,
+            t.id,
+            at(2026, 4, 22, 14),
+            at(2026, 4, 22, 14) + Duration::minutes(30),
+        );
+        seed_closed_entry(&mut r, t.id, at(2026, 4, 23, 12), at(2026, 4, 23, 13));
+
+        let scope = Scope {
+            kind: ScopeKind::Range,
+            from: at(2026, 4, 22, 0),
+            to: at(2026, 4, 24, 0),
+        };
+        let now = at(2026, 4, 24, 0);
+        let report = ReportBuilder::new(&r)
+            .build(scope, Grouping::Day, now)
+            .unwrap();
+
+        // Two distinct dates expected.
+        assert_eq!(report.rows.len(), 2);
+        // Sorted descending by duration: the 22nd has 90m, the 23rd has 60m.
+        let labels: Vec<&str> = report.rows.iter().map(|r| r.label.as_str()).collect();
+        assert!(labels[0].contains("2026-04-22"));
+        assert!(labels[1].contains("2026-04-23"));
+        assert_eq!(report.rows[0].duration_seconds, 90 * 60);
+        assert_eq!(report.rows[1].duration_seconds, 60 * 60);
+        assert_eq!(report.rows[0].date.as_deref(), Some("2026-04-22"));
     }
 }

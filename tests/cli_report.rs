@@ -186,3 +186,22 @@ fn scope_flags_are_mutually_exclusive() {
         .assert()
         .failure();
 }
+
+#[test]
+fn by_day_groups_under_local_date_labels() {
+    let home = TempDir::new().unwrap();
+    bl(&home).args(["add", "anything"]).assert().success();
+    seed_closed_entry(
+        &home,
+        1,
+        local_today_at(10, 0),
+        local_today_at(10, 0) + Duration::minutes(30),
+    );
+
+    let today_label = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    bl(&home)
+        .args(["report", "--by-day"])
+        .assert()
+        .success()
+        .stdout(contains(today_label));
+}
