@@ -7,7 +7,7 @@ mod add;
 mod archive;
 mod delete;
 mod done;
-mod helpers;
+pub mod helpers;
 mod list;
 mod report;
 mod shortcut;

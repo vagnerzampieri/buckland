@@ -6,6 +6,8 @@ pub mod context;
 pub mod format;
 pub mod resolve;
 
+pub use commands::helpers::truncate as commands_truncate;
+
 use args::{Cli, Commands};
 use clap::Parser;
 

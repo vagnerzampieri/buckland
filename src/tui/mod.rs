@@ -3,6 +3,7 @@
 pub mod app;
 pub mod chrome;
 pub mod keymap;
+pub mod screens;
 pub mod terminal;
 pub mod theme;
 

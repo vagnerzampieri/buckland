@@ -10,7 +10,7 @@ pub(super) fn status_glyph(t: &Task) -> &'static str {
     }
 }
 
-pub(super) fn truncate(s: &str, max: usize) -> String {
+pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
