@@ -4,7 +4,7 @@
 
 use crate::cli::format::duration_compact;
 use crate::domain::Task;
-use crate::storage::Repo;
+use crate::storage::{Repo, SqliteRepo};
 use crate::tui::app::App;
 use crate::tui::keymap::KeyAction;
 use chrono::{DateTime, Utc};
@@ -140,9 +140,9 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, prompt: &Prompt) {
     frame.render_widget(Paragraph::new(line), prompt_area);
 }
 
-pub fn handle_key<R: Repo>(state: &mut TasksState, _app: &mut App<R>, action: KeyAction) -> bool {
+pub fn handle_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: KeyAction) -> bool {
     if state.prompt.is_some() {
-        // Prompt-mode handling is added in Tasks 9 & 10 below.
+        // Prompt-mode handling lands in Task 9.
         return false;
     }
     match action {
@@ -162,7 +162,48 @@ pub fn handle_key<R: Repo>(state: &mut TasksState, _app: &mut App<R>, action: Ke
             state.move_bottom();
             true
         }
+        KeyAction::StartSelected | KeyAction::Confirm => {
+            start_selected(state, app);
+            true
+        }
+        KeyAction::StopActive => {
+            stop_active(state, app);
+            true
+        }
         _ => false,
+    }
+}
+
+fn start_selected(state: &mut TasksState, app: &mut App<SqliteRepo>) {
+    use crate::domain::TimerOps;
+    let Some(task) = state.selected_task().cloned() else {
+        app.info("Nothing to start. Press n to add a task.");
+        return;
+    };
+    let now = app.now;
+    match TimerOps::new(&mut app.repo).start(task.id, now) {
+        Ok(_) => {
+            app.refresh_active_timer().ok();
+            let _ = state.refresh(&app.repo, now);
+            app.info(format!("Started #{} {}", task.id, task.title));
+        }
+        Err(e) => {
+            app.error(format!("Could not start: {e}"));
+        }
+    }
+}
+
+fn stop_active(state: &mut TasksState, app: &mut App<SqliteRepo>) {
+    use crate::domain::TimerOps;
+    let now = app.now;
+    match TimerOps::new(&mut app.repo).stop(now) {
+        Ok(Some(_)) => {
+            app.refresh_active_timer().ok();
+            let _ = state.refresh(&app.repo, now);
+            app.info("Stopped");
+        }
+        Ok(None) => app.info("Nothing to stop."),
+        Err(e) => app.error(format!("Could not stop: {e}")),
     }
 }
 
@@ -170,7 +211,8 @@ pub fn handle_key<R: Repo>(state: &mut TasksState, _app: &mut App<R>, action: Ke
 mod tests {
     use super::*;
     use crate::storage::SqliteRepo;
-    use crate::tui::app::App;
+    use crate::tui::app::{App, FooterMessage};
+    use crate::tui::keymap::KeyAction;
     use crate::tui::theme::Theme;
     use chrono::TimeZone;
 
@@ -241,6 +283,53 @@ mod tests {
         assert_eq!(state.selected, 4);
         state.move_top();
         assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn start_action_starts_timer_for_selected_task() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        let t = app.repo.create_task("alpha", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        let acted = handle_key(&mut state, &mut app, KeyAction::StartSelected);
+        assert!(acted);
+        let active = app.repo.active_time_entry().unwrap().expect("active set");
+        assert_eq!(active.task_id, t.id);
+    }
+
+    #[test]
+    fn start_action_with_empty_list_is_a_noop_and_warns() {
+        let (mut app, mut state) = fresh();
+        let acted = handle_key(&mut state, &mut app, KeyAction::StartSelected);
+        assert!(acted);
+        assert!(matches!(app.footer, FooterMessage::Info(_)));
+    }
+
+    #[test]
+    fn stop_action_ends_active_timer_and_refreshes_header() {
+        use crate::domain::TimerOps;
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        let t = app.repo.create_task("running", None).unwrap();
+        TimerOps::new(&mut app.repo).start(t.id, app.now).unwrap();
+        app.refresh_active_timer().unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+
+        let acted = handle_key(&mut state, &mut app, KeyAction::StopActive);
+        assert!(acted);
+        assert!(app.repo.active_time_entry().unwrap().is_none());
+        assert!(app.active_timer.is_none());
+    }
+
+    #[test]
+    fn confirm_action_starts_timer_when_no_prompt_open() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        let t = app.repo.create_task("alpha", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        handle_key(&mut state, &mut app, KeyAction::Confirm);
+        let active = app.repo.active_time_entry().unwrap().expect("active set");
+        assert_eq!(active.task_id, t.id);
     }
 
     fn dummy_task(id: i64) -> Task {
