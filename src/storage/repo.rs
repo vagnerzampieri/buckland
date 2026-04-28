@@ -48,6 +48,16 @@ pub trait Repo {
     fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration>;
     fn delete_time_entry(&mut self, id: i64) -> RepoResult<()>;
 
+    /// Update started_at, ended_at, and/or notes on a time entry. Pass
+    /// `None` to clear the optional fields.
+    fn update_time_entry(
+        &mut self,
+        id: i64,
+        started_at: DateTime<Utc>,
+        ended_at: Option<DateTime<Utc>>,
+        notes: Option<&str>,
+    ) -> RepoResult<TimeEntry>;
+
     /// All time entries whose `[started_at, ended_at_or_now)` interval
     /// overlaps the half-open UTC range `[from, to)`.
     /// Active entries (where `ended_at IS NULL`) are evaluated against `now`.
@@ -308,6 +318,29 @@ impl Repo for SqliteRepo {
             return Err(RepoError::TimeEntryNotFound(id));
         }
         Ok(())
+    }
+
+    fn update_time_entry(
+        &mut self,
+        id: i64,
+        started_at: DateTime<Utc>,
+        ended_at: Option<DateTime<Utc>>,
+        notes: Option<&str>,
+    ) -> RepoResult<TimeEntry> {
+        let updated = self.conn.execute(
+            "UPDATE time_entries SET started_at = ?1, ended_at = ?2, notes = ?3 WHERE id = ?4",
+            params![started_at, ended_at, notes, id],
+        )?;
+        if updated == 0 {
+            return Err(RepoError::TimeEntryNotFound(id));
+        }
+        self.conn
+            .query_row(
+                &format!("SELECT {TIME_ENTRY_COLS} FROM time_entries WHERE id = ?1"),
+                [id],
+                |row| TimeEntry::try_from(row),
+            )
+            .map_err(RepoError::from)
     }
 
     fn list_entries_in_range(
@@ -687,6 +720,35 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, active.id);
         assert!(entries[0].is_active());
+    }
+
+    #[test]
+    fn update_time_entry_changes_started_ended_notes() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("t", None).unwrap();
+        let e = r
+            .create_time_entry(t.id, Utc.with_ymd_and_hms(2026, 4, 22, 9, 0, 0).unwrap())
+            .unwrap();
+        r.end_time_entry(e.id, Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap())
+            .unwrap();
+
+        let new_start = Utc.with_ymd_and_hms(2026, 4, 22, 9, 15, 0).unwrap();
+        let new_end = Utc.with_ymd_and_hms(2026, 4, 22, 11, 0, 0).unwrap();
+        let updated = r
+            .update_time_entry(e.id, new_start, Some(new_end), Some("forgot to start"))
+            .unwrap();
+        assert_eq!(updated.started_at, new_start);
+        assert_eq!(updated.ended_at, Some(new_end));
+        assert_eq!(updated.notes.as_deref(), Some("forgot to start"));
+    }
+
+    #[test]
+    fn update_time_entry_returns_not_found_for_missing_id() {
+        match repo().update_time_entry(9999, Utc::now(), None, None) {
+            Err(RepoError::TimeEntryNotFound(id)) => assert_eq!(id, 9999),
+            other => panic!("expected TimeEntryNotFound, got {other:?}"),
+        }
     }
 
     #[test]
