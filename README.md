@@ -4,7 +4,7 @@ Keyboard-first time tracker for developers who use Shortcut. All-Rust, local SQL
 
 ## Status
 
-**Phases A, B, and C shipped** — `bl` is a usable CLI time tracker with read-only Shortcut integration and reports against a local SQLite file. TUI and tray are on the roadmap.
+**Phases A, B, C, and D shipped** — `bl` is a usable CLI time tracker with read-only Shortcut integration, reports against a local SQLite file, and a ratatui-based TUI. The tray binary is on the roadmap.
 
 See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown and [docs/superpowers/specs/2026-04-22-buckland-design.md](docs/superpowers/specs/2026-04-22-buckland-design.md) for the design spec.
 
@@ -13,6 +13,7 @@ See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown a
 - Full task-and-timer lifecycle from the terminal: `bl add`, `list`, `start`, `stop` / `pause`, `status`, `done`, `archive`, `delete`.
 - Shortcut integration (read-only): `bl add --sc SC-123` links a task to a story, `bl start SC-123` resumes or creates a task from a story, `bl shortcut SC-123` force-refreshes the cached story (1 h TTL).
 - Reports: `bl report` with scope flags (`--today | --week | --month | --all | --range FROM..TO`), grouping flags (`--by-task | --by-epic | --by-day`), Unicode-block bars, and `--json` for scripting.
+- TUI: Tasks / Agenda / Report screens with Edit overlay (run `bl` with no args).
 - Single-active-timer invariant enforced both in the schema (partial unique index) and in a transaction (`TimerOps::start` stops and starts atomically).
 - Hard delete is blocked for tasks that have time entries — the CLI suggests `archive` instead, so history is preserved by default.
 - Data lives in one SQLite file; no daemon, no HTTP surface.
@@ -22,7 +23,6 @@ See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown a
 
 | Phase | Delivers |
 |-------|----------|
-| D | Ratatui TUI: Tasks, Agenda, Report screens plus Edit and Help overlays. |
 | E | `bl-tray` StatusNotifierItem icon with a local 1 Hz clock tick. |
 | F | CI, `cargo deb`, release workflow, crates.io publish. |
 
@@ -81,6 +81,64 @@ bl report --all --json | jq                   # machine-readable dump for script
 ```
 
 Use `bl <command> --help` for flag details on any subcommand.
+
+## Keyboard shortcuts
+
+The TUI shares one keymap across all screens. `?` opens the in-app help overlay
+with the same content.
+
+### Navigation
+
+| Key            | Action                                  |
+|----------------|-----------------------------------------|
+| `j` / Down     | move down                               |
+| `k` / Up       | move up                                 |
+| `h` / Left     | previous (week / field)                 |
+| `l` / Right    | next (week / field)                     |
+| `gg`           | top                                     |
+| `G`            | bottom                                  |
+| `Tab`          | cycle view / modal field / report scope |
+
+### View
+
+| Key            | Action                          |
+|----------------|---------------------------------|
+| `g`            | Tasks (home)                    |
+| `a`            | Agenda                          |
+| `r`            | Report                          |
+| `?`            | Help                            |
+| `q` / `Esc`    | quit / close overlay            |
+
+### Tasks
+
+| Key       | Action                          |
+|-----------|---------------------------------|
+| `n`       | new task                        |
+| `s` / Enter | start selected                |
+| `S`       | stop active timer               |
+| `d`       | mark done                       |
+| `A`       | archive                         |
+| `D`       | delete (with confirm)           |
+| `e`       | edit task                       |
+| `/`       | filter                          |
+
+### Report
+
+| Key   | Action                       |
+|-------|------------------------------|
+| `Tab` | cycle scope                  |
+| `T`   | cycle grouping               |
+| `c`   | copy summary to clipboard    |
+| `j`   | toggle JSON dump             |
+
+### Edit overlay
+
+| Key         | Action       |
+|-------------|--------------|
+| `Tab`       | cycle fields |
+| Enter       | save         |
+| Ctrl+D      | delete entry |
+| `Esc`       | cancel       |
 
 ## Configuration
 

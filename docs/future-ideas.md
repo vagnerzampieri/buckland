@@ -256,3 +256,19 @@ When an item here graduates:
 2. Write a short brainstorm under `docs/superpowers/specs/` (even 100 lines) — this backlog doesn't replace the design pass.
 3. Move the item here to a `Delivered in vX.Y` section at the bottom so the history stays visible.
 4. Write the plan in `docs/plans/` and implement.
+
+---
+
+## Deferred from Phase D (2026-04-28)
+
+- **Insta snapshot tests for screen rendering.** Phase D shipped with direct
+  `TestBackend` buffer assertions to keep the dev-dep list minimal. Add insta
+  if/when we want to detect rendering regressions visually.
+- **Custom date ranges in the Report screen.** Phase D supports the four named
+  scopes (today/week/month/all). `--range FROM..TO` is CLI-only; the TUI
+  could expose a date picker. Defer until someone asks.
+- **Task edit modal (separate from time-entry edit).** Phase D's Edit overlay
+  edits time entries only. Editing a task's title / SC-id from inside the TUI
+  is a Phase E+ polish item.
+- **Mouse support / scroll wheel.** Spec non-goal for v1.
+- **Fuzzy filter.** Phase D filter is literal substring; fuzzy is deferred.
