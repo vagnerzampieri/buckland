@@ -142,8 +142,7 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, prompt: &Prompt) {
 
 pub fn handle_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: KeyAction) -> bool {
     if state.prompt.is_some() {
-        // Prompt-mode handling lands in Task 9.
-        return false;
+        return handle_prompt_key(state, app, action);
     }
     match action {
         KeyAction::Down => {
@@ -170,7 +169,94 @@ pub fn handle_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: Key
             stop_active(state, app);
             true
         }
+        KeyAction::Done => {
+            mark_selected_done(state, app);
+            true
+        }
+        KeyAction::Archive => {
+            archive_selected(state, app);
+            true
+        }
+        KeyAction::Delete => {
+            open_delete_confirm(state, app);
+            true
+        }
         _ => false,
+    }
+}
+
+fn handle_prompt_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: KeyAction) -> bool {
+    let Some(prompt) = state.prompt.clone() else {
+        return false;
+    };
+    match (prompt, action) {
+        (Prompt::DeleteConfirm { task_id, title }, KeyAction::Char('y')) => {
+            confirm_delete(state, app, task_id, &title);
+            state.prompt = None;
+            true
+        }
+        (Prompt::DeleteConfirm { .. }, _) => {
+            state.prompt = None;
+            app.info("Cancelled");
+            true
+        }
+        // NewTask + filter prompt handlers land in Task 10.
+        _ => false,
+    }
+}
+
+fn mark_selected_done(state: &mut TasksState, app: &mut App<SqliteRepo>) {
+    let Some(task) = state.selected_task().cloned() else {
+        app.info("Nothing selected.");
+        return;
+    };
+    match app.repo.mark_task_done(task.id, app.now) {
+        Ok(_) => {
+            let _ = state.refresh(&app.repo, app.now);
+            app.info(format!("Done #{} {}", task.id, task.title));
+        }
+        Err(e) => app.error(format!("Could not mark done: {e}")),
+    }
+}
+
+fn archive_selected(state: &mut TasksState, app: &mut App<SqliteRepo>) {
+    let Some(task) = state.selected_task().cloned() else {
+        app.info("Nothing selected.");
+        return;
+    };
+    match app.repo.archive_task(task.id, app.now) {
+        Ok(_) => {
+            let _ = state.refresh(&app.repo, app.now);
+            app.info(format!("Archived #{} {}", task.id, task.title));
+        }
+        Err(e) => app.error(format!("Could not archive: {e}")),
+    }
+}
+
+fn open_delete_confirm(state: &mut TasksState, app: &mut App<SqliteRepo>) {
+    let Some(task) = state.selected_task() else {
+        app.info("Nothing selected.");
+        return;
+    };
+    state.prompt = Some(Prompt::DeleteConfirm {
+        task_id: task.id,
+        title: task.title.clone(),
+    });
+}
+
+fn confirm_delete(state: &mut TasksState, app: &mut App<SqliteRepo>, task_id: i64, title: &str) {
+    use crate::storage::RepoError;
+    match app.repo.delete_task(task_id) {
+        Ok(()) => {
+            let _ = state.refresh(&app.repo, app.now);
+            app.info(format!("Deleted #{task_id} {title}"));
+        }
+        Err(RepoError::TaskHasEntries(_)) => {
+            app.error(format!(
+                "Task #{task_id} has time entries — use Archive (A) instead."
+            ));
+        }
+        Err(e) => app.error(format!("Could not delete: {e}")),
     }
 }
 
@@ -330,6 +416,76 @@ mod tests {
         handle_key(&mut state, &mut app, KeyAction::Confirm);
         let active = app.repo.active_time_entry().unwrap().expect("active set");
         assert_eq!(active.task_id, t.id);
+    }
+
+    #[test]
+    fn done_action_marks_selected_task_complete_and_drops_from_open_list() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        app.repo.create_task("finish me", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        handle_key(&mut state, &mut app, KeyAction::Done);
+        assert!(
+            state.tasks.is_empty(),
+            "open list should be empty after done"
+        );
+        assert!(matches!(app.footer, FooterMessage::Info(_)));
+    }
+
+    #[test]
+    fn archive_action_drops_from_open_list() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        app.repo.create_task("shelf", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        handle_key(&mut state, &mut app, KeyAction::Archive);
+        assert!(state.tasks.is_empty());
+    }
+
+    #[test]
+    fn delete_action_opens_confirm_prompt_then_y_deletes() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        app.repo.create_task("oops", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+
+        // First D opens prompt.
+        handle_key(&mut state, &mut app, KeyAction::Delete);
+        assert!(matches!(state.prompt, Some(Prompt::DeleteConfirm { .. })));
+
+        // Pressing y deletes the task and clears the prompt.
+        handle_key(&mut state, &mut app, KeyAction::Char('y'));
+        assert!(state.prompt.is_none());
+        assert!(state.tasks.is_empty());
+    }
+
+    #[test]
+    fn delete_confirm_n_cancels() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        app.repo.create_task("oops", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        handle_key(&mut state, &mut app, KeyAction::Delete);
+        handle_key(&mut state, &mut app, KeyAction::Char('n'));
+        assert!(state.prompt.is_none());
+        assert_eq!(state.tasks.len(), 1, "task still present after cancel");
+    }
+
+    #[test]
+    fn delete_blocked_when_task_has_entries() {
+        use crate::domain::TimerOps;
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        let t = app.repo.create_task("with entries", None).unwrap();
+        TimerOps::new(&mut app.repo).start(t.id, app.now).unwrap();
+        TimerOps::new(&mut app.repo)
+            .stop(app.now + chrono::Duration::seconds(5))
+            .unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        handle_key(&mut state, &mut app, KeyAction::Delete);
+        handle_key(&mut state, &mut app, KeyAction::Char('y'));
+        assert_eq!(state.tasks.len(), 1, "delete must be blocked");
+        assert!(matches!(app.footer, FooterMessage::Error(_)));
     }
 
     fn dummy_task(id: i64) -> Task {
