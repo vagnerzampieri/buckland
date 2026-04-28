@@ -1,5 +1,6 @@
 //! Buckland TUI — ratatui surface composed on top of the `Repo` trait.
 
+pub mod keymap;
 pub mod terminal;
 pub mod theme;
 
