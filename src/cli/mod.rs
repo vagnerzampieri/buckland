@@ -12,7 +12,8 @@ use clap::Parser;
 pub fn run() -> anyhow::Result<i32> {
     let cli = Cli::parse();
     let mut ctx = context::open()?;
-    match cli.command {
+    let command = cli.command.unwrap_or(Commands::Tui);
+    match command {
         Commands::Add {
             title,
             description,
@@ -54,5 +55,6 @@ pub fn run() -> anyhow::Result<i32> {
                 json,
             },
         ),
+        Commands::Tui => crate::tui::run(ctx),
     }
 }

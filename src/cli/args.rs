@@ -4,11 +4,13 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "bl",
     about = "Time tracker for developers who use Shortcut",
-    version
+    version,
+    subcommand_required = false,
+    arg_required_else_help = false
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -97,4 +99,6 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Open the TUI. Same as running `bl` with no subcommand.
+    Tui,
 }

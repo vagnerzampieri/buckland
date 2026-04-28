@@ -46,3 +46,23 @@ fn unknown_subcommand_fails() {
         .assert()
         .failure();
 }
+
+#[test]
+fn tui_subcommand_listed_in_help() {
+    Command::cargo_bin("bl")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("tui"));
+}
+
+#[test]
+fn tui_help_describes_command() {
+    Command::cargo_bin("bl")
+        .unwrap()
+        .args(["tui", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Open the TUI"));
+}
