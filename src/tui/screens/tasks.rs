@@ -27,6 +27,7 @@ pub struct TasksState {
 pub enum Prompt {
     NewTask { buffer: String },
     DeleteConfirm { task_id: i64, title: String },
+    Filter { buffer: String },
 }
 
 impl TasksState {
@@ -132,6 +133,11 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, prompt: &Prompt) {
             Span::raw(buffer.clone()),
             Span::raw("_"),
         ]),
+        Prompt::Filter { buffer } => Line::from(vec![
+            Span::styled("Filter: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(buffer.clone()),
+            Span::raw("_"),
+        ]),
         Prompt::DeleteConfirm { task_id, title } => Line::from(vec![Span::styled(
             format!("Delete task #{task_id} \"{title}\"? y/N"),
             Style::default().add_modifier(Modifier::BOLD),
@@ -181,6 +187,18 @@ pub fn handle_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: Key
             open_delete_confirm(state, app);
             true
         }
+        KeyAction::NewTask => {
+            state.prompt = Some(Prompt::NewTask {
+                buffer: String::new(),
+            });
+            true
+        }
+        KeyAction::Filter => {
+            state.prompt = Some(Prompt::Filter {
+                buffer: String::new(),
+            });
+            true
+        }
         _ => false,
     }
 }
@@ -200,9 +218,74 @@ fn handle_prompt_key(state: &mut TasksState, app: &mut App<SqliteRepo>, action: 
             app.info("Cancelled");
             true
         }
-        // NewTask + filter prompt handlers land in Task 10.
-        _ => false,
+        (Prompt::NewTask { mut buffer }, KeyAction::Char(c)) => {
+            buffer.push(c);
+            state.prompt = Some(Prompt::NewTask { buffer });
+            true
+        }
+        (Prompt::NewTask { mut buffer }, KeyAction::Backspace) => {
+            buffer.pop();
+            state.prompt = Some(Prompt::NewTask { buffer });
+            true
+        }
+        (Prompt::NewTask { buffer }, KeyAction::Confirm) => {
+            create_task_from_prompt(state, app, &buffer);
+            state.prompt = None;
+            true
+        }
+        (Prompt::NewTask { .. }, KeyAction::Quit) => {
+            state.prompt = None;
+            app.info("Cancelled");
+            true
+        }
+        (Prompt::Filter { mut buffer }, KeyAction::Char(c)) => {
+            buffer.push(c);
+            state.prompt = Some(Prompt::Filter { buffer });
+            true
+        }
+        (Prompt::Filter { mut buffer }, KeyAction::Backspace) => {
+            buffer.pop();
+            state.prompt = Some(Prompt::Filter { buffer });
+            true
+        }
+        (Prompt::Filter { buffer }, KeyAction::Confirm) => {
+            apply_filter(state, app, buffer);
+            state.prompt = None;
+            true
+        }
+        (Prompt::Filter { .. }, KeyAction::Quit) => {
+            state.filter = None;
+            state.prompt = None;
+            let _ = state.refresh(&app.repo, app.now);
+            true
+        }
+        _ => true, // swallow anything else while a prompt is open
     }
+}
+
+fn create_task_from_prompt(state: &mut TasksState, app: &mut App<SqliteRepo>, title: &str) {
+    let title = title.trim();
+    if title.is_empty() {
+        app.info("Empty title — nothing created.");
+        return;
+    }
+    match app.repo.create_task(title, None) {
+        Ok(t) => {
+            let _ = state.refresh(&app.repo, app.now);
+            app.info(format!("Added #{} {}", t.id, t.title));
+        }
+        Err(e) => app.error(format!("Could not add: {e}")),
+    }
+}
+
+fn apply_filter(state: &mut TasksState, app: &mut App<SqliteRepo>, buffer: String) {
+    let trimmed = buffer.trim();
+    state.filter = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    };
+    let _ = state.refresh(&app.repo, app.now);
 }
 
 fn mark_selected_done(state: &mut TasksState, app: &mut App<SqliteRepo>) {
@@ -499,5 +582,81 @@ mod tests {
             created_at: now(),
             updated_at: now(),
         }
+    }
+
+    #[test]
+    fn new_task_prompt_consumes_chars_then_enter_creates_task() {
+        let (mut app, mut state) = fresh();
+        state.refresh(&app.repo, app.now).unwrap();
+
+        handle_key(&mut state, &mut app, KeyAction::NewTask);
+        assert!(matches!(state.prompt, Some(Prompt::NewTask { .. })));
+
+        for c in "fix login".chars() {
+            handle_key(&mut state, &mut app, KeyAction::Char(c));
+        }
+        if let Some(Prompt::NewTask { buffer }) = &state.prompt {
+            assert_eq!(buffer, "fix login");
+        } else {
+            panic!("expected NewTask prompt");
+        }
+
+        handle_key(&mut state, &mut app, KeyAction::Confirm);
+        assert!(state.prompt.is_none(), "prompt must close on enter");
+        assert_eq!(state.tasks.len(), 1);
+        assert_eq!(state.tasks[0].title, "fix login");
+    }
+
+    #[test]
+    fn new_task_prompt_esc_cancels() {
+        let (mut app, mut state) = fresh();
+        handle_key(&mut state, &mut app, KeyAction::NewTask);
+        handle_key(&mut state, &mut app, KeyAction::Char('x'));
+        handle_key(&mut state, &mut app, KeyAction::Quit); // esc / q maps to Quit
+        assert!(state.prompt.is_none());
+        assert!(state.tasks.is_empty());
+    }
+
+    #[test]
+    fn new_task_prompt_backspace_removes_last_char() {
+        let (mut app, mut state) = fresh();
+        handle_key(&mut state, &mut app, KeyAction::NewTask);
+        handle_key(&mut state, &mut app, KeyAction::Char('a'));
+        handle_key(&mut state, &mut app, KeyAction::Char('b'));
+        handle_key(&mut state, &mut app, KeyAction::Backspace);
+        if let Some(Prompt::NewTask { buffer }) = &state.prompt {
+            assert_eq!(buffer, "a");
+        } else {
+            panic!("expected NewTask prompt");
+        }
+    }
+
+    #[test]
+    fn filter_prompt_narrows_list_live() {
+        use crate::storage::Repo;
+        let (mut app, mut state) = fresh();
+        app.repo.create_task("Login flow", None).unwrap();
+        app.repo.create_task("Pricing", None).unwrap();
+        state.refresh(&app.repo, app.now).unwrap();
+        assert_eq!(state.tasks.len(), 2);
+
+        handle_key(&mut state, &mut app, KeyAction::Filter);
+        for c in "log".chars() {
+            handle_key(&mut state, &mut app, KeyAction::Char(c));
+        }
+        // After confirm, prompt closes, filter persists, list narrows.
+        handle_key(&mut state, &mut app, KeyAction::Confirm);
+        assert_eq!(state.tasks.len(), 1);
+        assert_eq!(state.tasks[0].title, "Login flow");
+        assert_eq!(state.filter.as_deref(), Some("log"));
+    }
+
+    #[test]
+    fn filter_prompt_esc_clears_filter() {
+        let (mut app, mut state) = fresh();
+        state.filter = Some("old".into());
+        handle_key(&mut state, &mut app, KeyAction::Filter);
+        handle_key(&mut state, &mut app, KeyAction::Quit);
+        assert!(state.filter.is_none(), "esc clears any prior filter");
     }
 }
