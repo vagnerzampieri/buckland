@@ -37,5 +37,7 @@ falhar, **não mergear** — reporte o comportamento observado.
 | Fase | Arquivo | Status |
 |------|---------|--------|
 | B — Shortcut integration | [`phase-b-shortcut.md`](phase-b-shortcut.md) | ativo |
+| C — Reports               | [`phase-c-report.md`](phase-c-report.md)   | ativo |
+| D — TUI                   | [`phase-d-tui.md`](phase-d-tui.md)         | ativo |
 
 Adicione fases futuras linkadas acima à medida que forem entregues.
