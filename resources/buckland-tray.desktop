@@ -8,4 +8,3 @@ Terminal=false
 Categories=Utility;Office;
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
-NoDisplay=false

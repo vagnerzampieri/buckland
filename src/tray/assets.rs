@@ -13,9 +13,11 @@ pub const APP_ICON_SVG: &[u8] = include_bytes!("../../resources/buckland.svg");
 
 /// The freedesktop icon-theme names we expose. Hosts resolve these
 /// against `~/.local/share/icons/hicolor/scalable/apps/<name>.svg`.
+/// `ICON_NAME_APP` is the desktop app icon; the others are tray-state icons.
 pub const ICON_NAME_IDLE: &str = "buckland-tray-idle";
 pub const ICON_NAME_RUNNING: &str = "buckland-tray-running";
 pub const ICON_NAME_ERROR: &str = "buckland-tray-error";
+pub const ICON_NAME_APP: &str = "buckland";
 
 #[cfg(test)]
 mod tests {
@@ -47,13 +49,18 @@ mod tests {
 
     #[test]
     fn icon_names_are_unique_and_kebab_cased() {
-        let names = [ICON_NAME_IDLE, ICON_NAME_RUNNING, ICON_NAME_ERROR];
+        let names = [
+            ICON_NAME_IDLE,
+            ICON_NAME_RUNNING,
+            ICON_NAME_ERROR,
+            ICON_NAME_APP,
+        ];
         let mut sorted = names.to_vec();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(sorted.len(), 3, "icon names must be distinct");
+        assert_eq!(sorted.len(), 4, "icon names must be distinct");
         for n in &names {
-            assert!(n.starts_with("buckland-"));
+            assert!(n.starts_with("buckland"));
             assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '-'));
         }
     }
