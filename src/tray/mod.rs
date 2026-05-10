@@ -9,4 +9,5 @@
 //! - [`runtime`] — ksni service + polling thread + glib tick (Task E4).
 
 pub mod assets;
-// state and runtime are added by Tasks E3 and E4.
+pub mod state;
+// runtime is added by Task E4.
