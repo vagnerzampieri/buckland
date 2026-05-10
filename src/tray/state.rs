@@ -191,12 +191,19 @@ mod tests {
 
     #[test]
     fn tooltip_error_truncates_long_reason() {
-        let long = "x".repeat(200);
+        // Use a multi-byte codepoint (em-dash = 3 UTF-8 bytes) so we verify
+        // the cap is codepoint-based, not byte-based.
+        let long = "\u{2014}".repeat(100);
         let s = TrayState::Error(long);
         let t = tooltip(&s, at_local(2026, 4, 22, 9, 0));
-        // 60-char cap on the reason, plus the prefix.
-        assert!(t.len() <= "Buckland: cannot read database \u{2014} ".len() + 60);
-        assert!(t.starts_with("Buckland: cannot read database \u{2014} "));
+        let prefix = "Buckland: cannot read database \u{2014} ";
+        assert!(t.starts_with(prefix));
+        let reason_part = t.trim_start_matches(prefix);
+        assert_eq!(
+            reason_part.chars().count(),
+            60,
+            "error reason must be capped at 60 chars (counted by Unicode scalar values, not bytes)"
+        );
     }
 
     #[test]
@@ -325,5 +332,12 @@ mod tests {
     fn poll_to_state_with_reason_propagates_message() {
         let s = poll_to_state_with_reason(Err::<Option<ActiveSnapshot>, _>("locked".into()), false);
         assert_eq!(s, TrayState::Error("locked".into()));
+    }
+
+    #[test]
+    fn poll_to_state_with_reason_prefers_no_database_over_active_snapshot() {
+        let snap = snap(1, "ignored", None, at_utc(2026, 4, 22, 9, 0));
+        let state = poll_to_state_with_reason(Ok(Some(snap)), true);
+        assert_eq!(state, TrayState::NoDatabase);
     }
 }
