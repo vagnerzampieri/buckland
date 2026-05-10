@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Buckland Tray
+Comment=Time tracker tray icon
+Exec=bl-tray
+Icon=buckland
+Terminal=false
+Categories=Utility;Office;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
