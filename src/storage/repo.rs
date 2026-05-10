@@ -17,6 +17,11 @@ pub enum RepoError {
     TimeEntryNotFound(i64),
     #[error("cannot hard-delete task {0}: it has time entries. Use archive instead.")]
     TaskHasEntries(i64),
+    /// The database file does not exist on disk. Distinct from a generic
+    /// open error so the tray can render "no database yet" instead of an
+    /// alarming "cannot read database" message.
+    #[error("database file not found: {0}")]
+    DatabaseMissing(std::path::PathBuf),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
 }
@@ -44,6 +49,10 @@ pub trait Repo {
     /// row exists but has already been ended.
     fn end_time_entry(&mut self, id: i64, ended_at: DateTime<Utc>) -> RepoResult<TimeEntry>;
     fn active_time_entry(&self) -> RepoResult<Option<TimeEntry>>;
+    /// One-shot read of the currently active timer joined with its task
+    /// and (if linked) the Shortcut story's `external_id`. Returns
+    /// `Ok(None)` when no row in `time_entries` has `ended_at IS NULL`.
+    fn active_snapshot(&self) -> RepoResult<Option<crate::domain::ActiveSnapshot>>;
     fn list_entries_for_task(&self, task_id: i64) -> RepoResult<Vec<TimeEntry>>;
     fn task_total_duration(&self, task_id: i64, now: DateTime<Utc>) -> RepoResult<Duration>;
     fn delete_time_entry(&mut self, id: i64) -> RepoResult<()>;
@@ -89,12 +98,40 @@ pub trait Repo {
 }
 
 pub struct SqliteRepo {
+    // Connection doesn't implement Debug; we derive Debug manually with a
+    // placeholder so test panics and error messages can format the type.
     conn: Connection,
+}
+
+impl std::fmt::Debug for SqliteRepo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteRepo").finish_non_exhaustive()
+    }
 }
 
 impl SqliteRepo {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
+    }
+
+    /// Open the database at `path` for read-only access. Returns
+    /// [`RepoError::DatabaseMissing`] if the file does not exist (so the
+    /// tray can render "no database yet" without alarming the user) and
+    /// [`RepoError::Sqlite`] for any other failure (locked, corrupt,
+    /// permission denied).
+    pub fn open_read_only(path: &std::path::Path) -> RepoResult<Self> {
+        if !path.exists() {
+            return Err(RepoError::DatabaseMissing(path.to_path_buf()));
+        }
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        // Foreign keys aren't enforced by default on read-only connections;
+        // we don't need them for SELECTs but turning them on costs nothing.
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "busy_timeout", 3000)?;
+        Ok(Self { conn })
     }
 
     #[cfg(test)]
@@ -287,6 +324,27 @@ impl Repo for SqliteRepo {
                 [],
                 |row| TimeEntry::try_from(row),
             )
+            .optional()
+            .map_err(RepoError::from)
+    }
+
+    fn active_snapshot(&self) -> RepoResult<Option<crate::domain::ActiveSnapshot>> {
+        use crate::domain::ActiveSnapshot;
+        let sql = "SELECT te.task_id, t.title, ss.external_id, te.started_at \
+                   FROM time_entries te \
+                   JOIN tasks t ON t.id = te.task_id \
+                   LEFT JOIN shortcut_stories ss ON ss.id = t.shortcut_story_id \
+                   WHERE te.ended_at IS NULL \
+                   LIMIT 1";
+        self.conn
+            .query_row(sql, [], |row| {
+                Ok(ActiveSnapshot {
+                    task_id: row.get(0)?,
+                    task_title: row.get(1)?,
+                    sc_external_id: row.get(2)?,
+                    started_at: row.get(3)?,
+                })
+            })
             .optional()
             .map_err(RepoError::from)
     }
@@ -769,5 +827,87 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap();
         let entries = r.list_entries_in_range(from, to, now).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn active_snapshot_returns_none_when_idle() {
+        let r = repo();
+        assert!(r.active_snapshot().unwrap().is_none());
+    }
+
+    #[test]
+    fn active_snapshot_returns_task_and_started_at_for_active_entry() {
+        use chrono::TimeZone;
+        let mut r = repo();
+        let t = r.create_task("fix login", None).unwrap();
+        let started = Utc.with_ymd_and_hms(2026, 4, 22, 9, 15, 0).unwrap();
+        r.create_time_entry(t.id, started).unwrap();
+
+        let snap = r.active_snapshot().unwrap().expect("active snapshot");
+        assert_eq!(snap.task_id, t.id);
+        assert_eq!(snap.task_title, "fix login");
+        assert_eq!(snap.sc_external_id, None);
+        assert_eq!(snap.started_at, started);
+    }
+
+    #[test]
+    fn active_snapshot_includes_shortcut_external_id_when_linked() {
+        use crate::shortcut::Story;
+        use chrono::TimeZone;
+        let mut r = repo();
+        let row = r
+            .upsert_shortcut_story(
+                &Story {
+                    external_id: 4242,
+                    title: Some("SC story".into()),
+                    epic_id: None,
+                    epic_name: None,
+                    state: None,
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let t = r.create_task("linked", None).unwrap();
+        r.link_task_to_story(t.id, row.id, Utc::now()).unwrap();
+        let started = Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap();
+        r.create_time_entry(t.id, started).unwrap();
+
+        let snap = r.active_snapshot().unwrap().expect("active");
+        assert_eq!(snap.sc_external_id, Some(4242));
+        assert_eq!(snap.task_title, "linked");
+    }
+
+    #[test]
+    fn open_read_only_rejects_writes() {
+        use crate::storage::open;
+        use rusqlite::ErrorCode;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("buckland.db");
+        // Create the schema with a writable open first so the DB exists.
+        let _ = open(&path).unwrap();
+
+        let ro = SqliteRepo::open_read_only(&path).expect("open ro");
+        let res = ro.connection().execute(
+            "INSERT INTO tasks (title, created_at, updated_at) VALUES ('x', ?1, ?1)",
+            rusqlite::params![Utc::now()],
+        );
+        let err = res.expect_err("read-only must reject writes");
+        let rusqlite::Error::SqliteFailure(e, _) = err else {
+            panic!("expected SqliteFailure, got {err:?}");
+        };
+        assert_eq!(e.code, ErrorCode::ReadOnly);
+    }
+
+    #[test]
+    fn open_read_only_returns_database_missing_when_file_absent() {
+        use crate::storage::repo::RepoError;
+        use std::path::Path;
+        let res = SqliteRepo::open_read_only(Path::new("/tmp/buckland-does-not-exist-zzz.db"));
+        match res {
+            Err(RepoError::DatabaseMissing(_)) => {}
+            other => panic!("expected DatabaseMissing, got {other:?}"),
+        }
     }
 }
