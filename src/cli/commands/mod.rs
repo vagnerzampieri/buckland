@@ -14,6 +14,7 @@ mod shortcut;
 mod start;
 mod status;
 mod stop;
+mod tray;
 
 pub use add::add;
 pub use archive::archive;
@@ -25,3 +26,4 @@ pub use shortcut::shortcut_refresh;
 pub use start::start;
 pub use status::status;
 pub use stop::stop;
+pub use tray::tray;

@@ -101,4 +101,7 @@ pub enum Commands {
     },
     /// Open the TUI. Same as running `bl` with no subcommand.
     Tui,
+    /// Run the tray icon process. Same loop as the `bl-tray` binary.
+    #[cfg(feature = "tray")]
+    Tray,
 }

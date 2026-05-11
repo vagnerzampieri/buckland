@@ -58,5 +58,7 @@ pub fn run() -> anyhow::Result<i32> {
             },
         ),
         Commands::Tui => crate::tui::run(ctx),
+        #[cfg(feature = "tray")]
+        Commands::Tray => commands::tray(&ctx),
     }
 }
