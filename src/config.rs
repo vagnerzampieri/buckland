@@ -188,6 +188,47 @@ mod tests {
     }
 
     #[test]
+    fn tray_poll_seconds_loads_from_toml() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[tray]\npoll_seconds = 15\n").unwrap();
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.tray.poll_seconds, 15);
+    }
+
+    #[test]
+    fn tray_poll_seconds_default_is_thirty_when_section_absent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[ui]\nicons = \"unicode\"\n").unwrap();
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.tray.poll_seconds, 30);
+    }
+
+    #[test]
+    fn tray_poll_seconds_round_trip_through_save_and_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut cfg = Config::default();
+        cfg.tray.poll_seconds = 12;
+        save(&path, &cfg).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.tray.poll_seconds, 12);
+    }
+
+    #[test]
+    fn tray_poll_seconds_zero_is_accepted_and_preserved() {
+        // Sentinel: `0` is technically valid TOML; the runtime clamps it
+        // to `>= 1` in `spawn_polling_thread` so the polling loop doesn't
+        // tight-loop. Config layer just stores what the user typed.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[tray]\npoll_seconds = 0\n").unwrap();
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.tray.poll_seconds, 0);
+    }
+
+    #[test]
     fn malformed_toml_returns_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");

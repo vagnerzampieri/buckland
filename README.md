@@ -167,7 +167,7 @@ icons = "unicode"               # or "ascii"
 accent_color = "cyan"
 
 [tray]
-poll_seconds = 30               # Phase E
+poll_seconds = 30               # how often the tray polls the SQLite file
 ```
 
 ## Development
