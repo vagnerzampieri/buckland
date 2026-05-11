@@ -98,6 +98,10 @@ pub enum Commands {
         /// Emit a JSON object instead of a table.
         #[arg(long)]
         json: bool,
+        /// Copy the one-line summary (or the JSON body, when --json is
+        /// set) to the system clipboard via wl-copy or xclip.
+        #[arg(long, short = 'c')]
+        copy: bool,
     },
     /// Open the TUI. Same as running `bl` with no subcommand.
     Tui,

@@ -43,6 +43,7 @@ pub fn run() -> anyhow::Result<i32> {
             by_epic,
             by_day,
             json,
+            copy,
         } => commands::report(
             &mut ctx,
             commands::ReportArgs {
@@ -55,6 +56,7 @@ pub fn run() -> anyhow::Result<i32> {
                 by_epic,
                 by_day,
                 json,
+                copy,
             },
         ),
         Commands::Tui => crate::tui::run(ctx),

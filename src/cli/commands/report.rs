@@ -10,6 +10,7 @@ pub struct ReportArgs {
     pub by_epic: bool,
     pub by_day: bool,
     pub json: bool,
+    pub copy: bool,
 }
 
 pub fn report(ctx: &mut Context, args: ReportArgs) -> anyhow::Result<i32> {
@@ -27,19 +28,57 @@ pub fn report(ctx: &mut Context, args: ReportArgs) -> anyhow::Result<i32> {
 
     let report = ReportBuilder::new(&ctx.repo).build(scope, grouping, now)?;
 
-    if args.json {
-        let body = serde_json::to_string_pretty(&report)?;
-        println!("{body}");
-        return Ok(0);
-    }
+    let payload = if args.json {
+        serde_json::to_string_pretty(&report)?
+    } else {
+        format_one_liner(&report)
+    };
 
-    if report.rows.is_empty() {
+    if args.copy {
+        match crate::clipboard::copy(&payload) {
+            Ok(tool) => {
+                eprintln!("Copied to clipboard via {tool}");
+                Ok(0)
+            }
+            Err(e) => {
+                eprintln!("clipboard copy failed: {e}");
+                Ok(1)
+            }
+        }
+    } else if args.json {
+        println!("{payload}");
+        Ok(0)
+    } else if report.rows.is_empty() {
         println!("No time tracked in this scope.");
-        return Ok(0);
+        Ok(0)
+    } else {
+        print_table(&report);
+        Ok(0)
     }
+}
 
-    print_table(&report);
-    Ok(0)
+fn format_one_liner(report: &crate::domain::Report) -> String {
+    use crate::cli::format::duration_compact;
+    use crate::domain::ScopeKind;
+    let scope_label = match report.scope.kind {
+        ScopeKind::Today => "today",
+        ScopeKind::Week => "this week",
+        ScopeKind::Month => "this month",
+        ScopeKind::All => "all time",
+        ScopeKind::Range => "range",
+    };
+    let total = chrono::Duration::seconds(report.total_seconds);
+    format!(
+        "buckland {} — {} across {} {}",
+        scope_label,
+        duration_compact(total),
+        report.rows.len(),
+        if report.rows.len() == 1 {
+            "row"
+        } else {
+            "rows"
+        },
+    )
 }
 
 fn resolve_scope(

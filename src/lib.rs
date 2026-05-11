@@ -1,6 +1,7 @@
 //! Buckland — personal time tracker core library.
 
 pub mod cli;
+pub mod clipboard;
 pub mod config;
 pub mod domain;
 pub mod shortcut;
