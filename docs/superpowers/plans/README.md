@@ -15,8 +15,8 @@ Buckland v1 is split into six phases. Each phase is a self-contained plan that p
 | B | [`2026-04-22-buckland-phase-b-shortcut.md`](2026-04-22-buckland-phase-b-shortcut.md) | **done (2026-04-24)** | Shortcut integration (read-only): `bl add --sc`, `bl shortcut`, SC-ID resolution in `bl start`, `shortcut_stories` cache with 1h TTL. |
 | C | `2026-04-22-buckland-phase-c-report.md` | **done (2026-04-27)** | `bl report` with scope (today/week/month/all), grouping (task/epic/day), Unicode block bars, `--json` dump. |
 | D | `2026-04-22-buckland-phase-d-tui.md` | **done (2026-04-28)** | ratatui TUI: Tasks, Agenda, Report screens plus Edit and Help overlays. Full keymap. |
-| E | `2026-04-22-buckland-phase-e-tray.md` | **ready** | `bl-tray` binary with ksni + local clock tick + clipboard helper (`bl report -c`). |
-| F | `2026-04-22-buckland-phase-f-oss.md` | **draft after E merges** | CI, `cargo deb`, release workflow, README with screenshots, CHANGELOG, CONTRIBUTING, CoC. |
+| E | `2026-04-22-buckland-phase-e-tray.md` | **done (2026-05-10)** | `bl-tray` binary with ksni + local clock tick + `bl report --copy` clipboard helper, `bl tray` subcommand. |
+| F | `2026-04-22-buckland-phase-f-oss.md` | **ready** | CI, `cargo deb`, release workflow, README with screenshots, CHANGELOG, CONTRIBUTING, CoC. |
 
 ## How to execute a phase
 
