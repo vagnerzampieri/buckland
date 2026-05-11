@@ -150,6 +150,35 @@ pub struct Report {
     pub total_seconds: i64,
 }
 
+impl Report {
+    /// Canonical one-liner summary used for clipboard copy in both CLI and TUI.
+    ///
+    /// Format: `"buckland {scope} — {duration} across {n} {row|rows}"`
+    pub fn one_liner(&self) -> String {
+        let scope_label = match self.scope.kind {
+            ScopeKind::Today => "today",
+            ScopeKind::Week => "this week",
+            ScopeKind::Month => "this month",
+            ScopeKind::All => "all time",
+            ScopeKind::Range => "range",
+        };
+        let secs = self.total_seconds.max(0);
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        let s = secs % 60;
+        let duration = if h > 0 {
+            format!("{h}h {m:02}m")
+        } else if m > 0 {
+            format!("{m}m")
+        } else {
+            format!("{s}s")
+        };
+        let n = self.rows.len();
+        let row_word = if n == 1 { "row" } else { "rows" };
+        format!("buckland {scope_label} — {duration} across {n} {row_word}")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReportRow {
     pub label: String,
@@ -353,6 +382,64 @@ mod tests {
 
     fn at(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
+    }
+
+    fn make_report(scope_kind: ScopeKind, total_seconds: i64, row_count: usize) -> Report {
+        let now = at(2026, 4, 27, 12);
+        let scope = match scope_kind {
+            ScopeKind::Today => Scope::today(now),
+            ScopeKind::Week => Scope::week(now),
+            ScopeKind::Month => Scope::month(now),
+            ScopeKind::All => Scope::all(now),
+            ScopeKind::Range => Scope::range("2026-04-01..2026-04-27").unwrap(),
+        };
+        let rows = (0..row_count)
+            .map(|i| ReportRow {
+                label: format!("task {i}"),
+                duration_seconds: if row_count > 0 {
+                    total_seconds / row_count as i64
+                } else {
+                    0
+                },
+                task_id: None,
+                shortcut_external_id: None,
+                date: None,
+            })
+            .collect();
+        Report {
+            scope,
+            grouping: Grouping::Task,
+            rows,
+            total_seconds,
+        }
+    }
+
+    #[test]
+    fn one_liner_singular_row() {
+        // 3 minutes = 180 seconds
+        let report = make_report(ScopeKind::Today, 180, 1);
+        assert_eq!(report.one_liner(), "buckland today — 3m across 1 row");
+    }
+
+    #[test]
+    fn one_liner_plural_rows() {
+        // 1h 30m = 5400 seconds, 3 rows
+        let report = make_report(ScopeKind::Today, 5400, 3);
+        assert_eq!(report.one_liner(), "buckland today — 1h 30m across 3 rows");
+    }
+
+    #[test]
+    fn one_liner_scope_labels() {
+        let cases = [
+            (ScopeKind::Week, "buckland this week — 0s across 0 rows"),
+            (ScopeKind::Month, "buckland this month — 0s across 0 rows"),
+            (ScopeKind::All, "buckland all time — 0s across 0 rows"),
+            (ScopeKind::Range, "buckland range — 0s across 0 rows"),
+        ];
+        for (kind, expected) in cases {
+            let report = make_report(kind, 0, 0);
+            assert_eq!(report.one_liner(), expected, "scope: {kind:?}");
+        }
     }
 
     #[test]

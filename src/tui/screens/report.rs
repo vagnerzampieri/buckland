@@ -167,13 +167,7 @@ fn copy_one_liner<R: Repo>(state: &ReportState, app: &mut App<R>) {
         app.info("Nothing to copy yet.");
         return;
     };
-    let total = chrono::Duration::seconds(report.total_seconds);
-    let one_liner = format!(
-        "{}: {} ({} rows)",
-        scope_label(state.scope_kind),
-        duration_compact(total),
-        report.rows.len()
-    );
+    let one_liner = report.one_liner();
     match clipboard::copy(&one_liner) {
         Ok(tool) => app.info(format!("Copied via {tool}")),
         Err(e) => app.error(format!("Copy failed: {e}")),

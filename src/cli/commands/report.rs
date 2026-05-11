@@ -58,27 +58,7 @@ pub fn report(ctx: &mut Context, args: ReportArgs) -> anyhow::Result<i32> {
 }
 
 fn format_one_liner(report: &crate::domain::Report) -> String {
-    use crate::cli::format::duration_compact;
-    use crate::domain::ScopeKind;
-    let scope_label = match report.scope.kind {
-        ScopeKind::Today => "today",
-        ScopeKind::Week => "this week",
-        ScopeKind::Month => "this month",
-        ScopeKind::All => "all time",
-        ScopeKind::Range => "range",
-    };
-    let total = chrono::Duration::seconds(report.total_seconds);
-    format!(
-        "buckland {} — {} across {} {}",
-        scope_label,
-        duration_compact(total),
-        report.rows.len(),
-        if report.rows.len() == 1 {
-            "row"
-        } else {
-            "rows"
-        },
-    )
+    report.one_liner()
 }
 
 fn resolve_scope(

@@ -96,7 +96,7 @@ fn spawn_and_pipe(tool: Tool, text: &str) -> Result<(), ClipboardError> {
         }
         Err(e) => return Err(e.into()),
     };
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(text.as_bytes())?;
     }
     let status = child.wait()?;
