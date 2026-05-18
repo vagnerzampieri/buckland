@@ -1,8 +1,9 @@
 //! `bl-tray` — the StatusNotifierItem tray icon.
 //!
 //! Reads the SQLite file in read-only mode, polls every
-//! `Config.tray.poll_seconds` (default 30s), and ticks the tooltip
-//! locally at 1Hz so the elapsed clock advances between polls.
+//! `Config.tray.poll_seconds` (default 2s — sub-ms SQLite read so cheap),
+//! and ticks the tooltip locally at 1Hz so the elapsed clock advances
+//! between polls.
 
 use anyhow::Context;
 use buckland::config;

@@ -25,6 +25,13 @@ export BUCKLAND_HOME=/tmp/bl-phase-e-smoke
 rm -rf "$BUCKLAND_HOME"
 ```
 
+> **Importante — `BUCKLAND_HOME` precisa ser exportado em TODO shell que
+> rodar `bl` ou `bl-tray`.** Env vars não atravessam terminais. Se você
+> abrir um segundo terminal para algum passo abaixo, repita o `export`
+> antes; senão o `bl-tray` lê o DB default e o tooltip nunca acha o
+> timer que `bl start` criou no outro shell. Confira com
+> `echo $BUCKLAND_HOME` se desconfiar.
+
 Confira que `wl-copy` (Wayland) ou `xclip` (X11) está instalado:
 
 ```bash
@@ -36,7 +43,7 @@ which wl-copy || which xclip || echo "FAIL: instale wl-clipboard ou xclip"
 ## 1. `bl-tray` sem DB — "no database yet"
 
 - [ ] Sem nada em `$BUCKLAND_HOME` ainda, rode `bl-tray &` num terminal.
-- [ ] O ícone aparece na bandeja com o desenho "outlined clock" (idle).
+- [ ] O ícone aparece na bandeja como um relógio **cinza** (idle).
 - [ ] Hover sobre o ícone — tooltip diz `Buckland: no database yet`.
 - [ ] Process não morre, fica idle.
 
@@ -46,21 +53,25 @@ which wl-copy || which xclip || echo "FAIL: instale wl-clipboard ou xclip"
 
 ## 2. Polling detecta criação do banco e timer ativo
 
-Em outro terminal:
+Em outro terminal (**lembre de re-exportar** `BUCKLAND_HOME=/tmp/bl-phase-e-smoke`):
 
 ```bash
+export BUCKLAND_HOME=/tmp/bl-phase-e-smoke
+alias bl="$PWD/target/release/bl"   # se necessário; senão use o path completo
+
 bl add "fix login flow"
 bl add "refactor imports"
 bl start 1
 ```
 
-- [ ] Dentro de `tray.poll_seconds` (default 30s — espere até 35s pra
+- [ ] Dentro de `tray.poll_seconds` (default 2s — espere até 5s pra
       garantir margem), o tooltip muda pra
       `#1 fix login flow — 00:00:XX (started HH:MM)`.
-- [ ] O ícone troca pro "filled clock" (running).
+- [ ] O ícone troca pra **verde** (running) — mesmo desenho de relógio,
+      cor diferente.
 - [ ] Hover repetido em segundos consecutivos — o `XX` avança 1, 2, 3...
       mostrando que o tick local de 1Hz está vivo (não dependente de poll).
-- [ ] `bl stop`. Dentro do próximo poll, ícone volta pra outlined e
+- [ ] `bl stop`. Dentro do próximo poll, ícone volta pra **cinza** e
       tooltip vira `Buckland: idle`.
 
 ---
@@ -96,8 +107,8 @@ Simule um banco inacessível:
 chmod 000 "$BUCKLAND_HOME/buckland.db"
 ```
 
-- [ ] Próximo poll: ícone troca pro "exclamation" (error). Tooltip:
-      `Buckland: cannot read database — <razão truncada>`.
+- [ ] Próximo poll: ícone troca pra **vermelho** com `!` no meio (error).
+      Tooltip: `Buckland: cannot read database — <razão truncada>`.
 
 ```bash
 chmod 600 "$BUCKLAND_HOME/buckland.db"
@@ -107,9 +118,20 @@ chmod 600 "$BUCKLAND_HOME/buckland.db"
 
 ---
 
-## 6. Quit pelo menu
+## 6. Menu com estado dinâmico + Quit
 
-- [ ] Right-click no ícone do tray → menu mostra **um único item**: "Quit".
+O `ubuntu-appindicators` no GNOME 49 não renderiza `Title`/`ToolTip` no
+hover do painel, então o estado live mora no menu — re-renderizado a
+cada tick de 1Hz.
+
+- [ ] Right-click no ícone → menu tem **três coisas**:
+      1. Primeira linha (cinza/disabled): texto igual ao do tooltip
+         (ex. `#1 fix login flow — 00:01:23 (started 14:02)` quando
+         rodando; `Buckland: idle` quando idle).
+      2. Separador horizontal.
+      3. `Quit`.
+- [ ] Com timer rodando, abrir o menu duas vezes em segundos diferentes —
+      o `XX` (segundos) da primeira linha avança entre as aberturas.
 - [ ] Click em "Quit" — `bl-tray` termina cleanly (`echo $?` → 0).
 
 ---
@@ -201,7 +223,7 @@ cargo build --no-default-features 2>&1 | tail -5
 - `bl-tray` consome CPU acima de ~1% em idle (poll mais 1Hz tick deve ser ruído).
 - `bl tray` segura DB lock (rode `bl add "x"` com `bl tray` rodando — deve
   funcionar instantaneamente; se travar, há regressão de read-only mode).
-- Menu do tray tem mais de um item.
+- Menu do tray tem qualquer coisa diferente de: estado-disabled, separador, Quit.
 - `bl report --copy` panica em qualquer ambiente em vez de exit code 1.
 - `bl report --copy --json` cola uma tabela ASCII em vez de JSON.
 

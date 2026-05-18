@@ -10,7 +10,6 @@
 //!   used by the runtime thread.
 
 use crate::domain::ActiveSnapshot;
-use crate::tray::assets;
 use chrono::{DateTime, Duration, Local};
 
 /// The four states the tray can be in. The runtime thread is responsible
@@ -69,17 +68,6 @@ fn format_active_tooltip(snap: &ActiveSnapshot, now_local: DateTime<Local>) -> S
             id = snap.task_id,
             title = snap.task_title,
         ),
-    }
-}
-
-/// Pick the freedesktop icon-theme name to expose for the given state.
-pub fn icon_name(state: &TrayState) -> &'static str {
-    match state {
-        // NoDatabase is intentionally idle-shaped: nothing is wrong, the
-        // user just hasn't started using `bl` yet.
-        TrayState::Idle | TrayState::NoDatabase => assets::ICON_NAME_IDLE,
-        TrayState::Active(_) => assets::ICON_NAME_RUNNING,
-        TrayState::Error(_) => assets::ICON_NAME_ERROR,
     }
 }
 
@@ -247,31 +235,6 @@ mod tests {
         let now_local = at_local(2026, 4, 22, 9, 30);
         let s = TrayState::Active(snap(1, "T", None, started_local.with_timezone(&Utc)));
         assert!(tooltip(&s, now_local).contains("00:00:00"));
-    }
-
-    #[test]
-    fn icon_name_maps_each_state() {
-        assert_eq!(
-            icon_name(&TrayState::Idle),
-            crate::tray::assets::ICON_NAME_IDLE
-        );
-        assert_eq!(
-            icon_name(&TrayState::Active(snap(
-                1,
-                "x",
-                None,
-                at_utc(2026, 4, 22, 9, 0)
-            ))),
-            crate::tray::assets::ICON_NAME_RUNNING
-        );
-        assert_eq!(
-            icon_name(&TrayState::NoDatabase),
-            crate::tray::assets::ICON_NAME_IDLE
-        );
-        assert_eq!(
-            icon_name(&TrayState::Error("x".into())),
-            crate::tray::assets::ICON_NAME_ERROR
-        );
     }
 
     #[test]

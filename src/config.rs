@@ -61,7 +61,7 @@ pub struct TrayConfig {
 }
 
 fn default_poll() -> u64 {
-    30
+    2
 }
 
 impl Default for TrayConfig {
@@ -173,7 +173,7 @@ mod tests {
         let cfg = load(&path).unwrap();
         assert_eq!(cfg.shortcut.token.as_deref(), Some("xyz"));
         assert_eq!(cfg.ui.icons, "unicode");
-        assert_eq!(cfg.tray.poll_seconds, 30);
+        assert_eq!(cfg.tray.poll_seconds, 2);
     }
 
     #[cfg(unix)]
@@ -197,12 +197,12 @@ mod tests {
     }
 
     #[test]
-    fn tray_poll_seconds_default_is_thirty_when_section_absent() {
+    fn tray_poll_seconds_default_is_two_when_section_absent() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "[ui]\nicons = \"unicode\"\n").unwrap();
         let cfg = load(&path).unwrap();
-        assert_eq!(cfg.tray.poll_seconds, 30);
+        assert_eq!(cfg.tray.poll_seconds, 2);
     }
 
     #[test]

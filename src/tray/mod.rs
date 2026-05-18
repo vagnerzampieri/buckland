@@ -3,6 +3,7 @@
 //! timer's state via tooltip + icon swap.
 
 pub mod assets;
+pub mod render;
 pub mod runtime;
 pub mod state;
 

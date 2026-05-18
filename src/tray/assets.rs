@@ -9,15 +9,6 @@
 pub const TRAY_IDLE_SVG: &[u8] = include_bytes!("../../resources/tray-idle.svg");
 pub const TRAY_RUNNING_SVG: &[u8] = include_bytes!("../../resources/tray-running.svg");
 pub const TRAY_ERROR_SVG: &[u8] = include_bytes!("../../resources/tray-error.svg");
-pub const APP_ICON_SVG: &[u8] = include_bytes!("../../resources/buckland.svg");
-
-/// The freedesktop icon-theme names we expose. Hosts resolve these
-/// against `~/.local/share/icons/hicolor/scalable/apps/<name>.svg`.
-/// `ICON_NAME_APP` is the desktop app icon; the others are tray-state icons.
-pub const ICON_NAME_IDLE: &str = "buckland-tray-idle";
-pub const ICON_NAME_RUNNING: &str = "buckland-tray-running";
-pub const ICON_NAME_ERROR: &str = "buckland-tray-error";
-pub const ICON_NAME_APP: &str = "buckland";
 
 #[cfg(test)]
 mod tests {
@@ -41,27 +32,24 @@ mod tests {
         assert!(TRAY_ERROR_SVG.starts_with(b"<?xml") || TRAY_ERROR_SVG.starts_with(b"<svg"));
     }
 
+    /// Regression: SNI hosts (gnome-shell + AppIndicator, snixembed, etc.)
+    /// rasterize tray SVGs via librsvg with no CSS context. `currentColor`
+    /// has no inherited `color` to resolve against, so it falls back to
+    /// black — which renders nearly invisibly on Ubuntu's dark top panel.
+    /// Tray SVGs must use explicit color values, never `currentColor`.
     #[test]
-    fn app_icon_svg_is_non_empty_and_starts_with_svg_tag() {
-        assert!(!APP_ICON_SVG.is_empty());
-        assert!(APP_ICON_SVG.starts_with(b"<?xml") || APP_ICON_SVG.starts_with(b"<svg"));
-    }
-
-    #[test]
-    fn icon_names_are_unique_and_kebab_cased() {
-        let names = [
-            ICON_NAME_IDLE,
-            ICON_NAME_RUNNING,
-            ICON_NAME_ERROR,
-            ICON_NAME_APP,
-        ];
-        let mut sorted = names.to_vec();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(sorted.len(), 4, "icon names must be distinct");
-        for n in &names {
-            assert!(n.starts_with("buckland"));
-            assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '-'));
+    fn tray_svgs_use_explicit_colors_not_currentcolor() {
+        for (name, bytes) in [
+            ("tray-idle.svg", TRAY_IDLE_SVG),
+            ("tray-running.svg", TRAY_RUNNING_SVG),
+            ("tray-error.svg", TRAY_ERROR_SVG),
+        ] {
+            let s = std::str::from_utf8(bytes).expect("svg is utf-8");
+            assert!(
+                !s.contains("currentColor"),
+                "{name} uses `currentColor`, which librsvg resolves to black \
+                 on dark tray panels — use an explicit color (e.g. #9E9E9E or #27AE60)"
+            );
         }
     }
 }

@@ -25,7 +25,7 @@ required-features = ["tray"]
 
 [features]
 default = ["tray"]
-tray = ["dep:ksni", "dep:glib"]
+tray = ["dep:ksni", "dep:glib", "dep:resvg"]
 
 [dependencies]
 anyhow = "1"
@@ -36,6 +36,7 @@ dirs = "5"
 glib = { version = "0.20", optional = true }
 ksni = { version = "0.3", features = ["blocking"], optional = true }
 ratatui = "0.29"
+resvg = { version = "0.47", default-features = false, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
 rusqlite_migration = "1"

@@ -8,8 +8,8 @@ use crate::domain::ActiveSnapshot;
 use crate::storage::repo::{RepoError, RepoResult};
 use crate::storage::{Repo, SqliteRepo};
 use crate::tray::{
-    assets,
-    state::{icon_name, tooltip, transition, TrayState},
+    render::{render_state_icons, StatePixmaps},
+    state::{tooltip, transition, TrayState},
 };
 use anyhow::Context;
 use chrono::Local;
@@ -35,7 +35,7 @@ impl TrayRuntimeConfig {
     pub fn for_path(db_path: PathBuf) -> Self {
         Self {
             db_path,
-            poll_seconds: 30,
+            poll_seconds: 2,
         }
     }
 }
@@ -63,41 +63,6 @@ fn short_reason(err: &RepoError) -> String {
     }
 }
 
-/// Install the embedded SVGs into a hicolor theme tree rooted at
-/// `target_root` (typically `~/.local/share/icons`). Idempotent: if
-/// the destination file's bytes already match the embedded constant,
-/// the file is not rewritten. Used at startup; failure is logged and
-/// ignored — the tray falls back to the host's default icon.
-pub(crate) fn install_theme_icons_at(target_root: &Path) -> std::io::Result<()> {
-    let apps = target_root.join("hicolor/scalable/apps");
-    std::fs::create_dir_all(&apps)?;
-    write_if_changed(&apps.join("buckland-tray-idle.svg"), assets::TRAY_IDLE_SVG)?;
-    write_if_changed(
-        &apps.join("buckland-tray-running.svg"),
-        assets::TRAY_RUNNING_SVG,
-    )?;
-    write_if_changed(
-        &apps.join("buckland-tray-error.svg"),
-        assets::TRAY_ERROR_SVG,
-    )?;
-    Ok(())
-}
-
-fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Ok(existing) = std::fs::read(path) {
-        if existing == bytes {
-            return Ok(());
-        }
-    }
-    std::fs::write(path, bytes)
-}
-
-fn data_icons_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("icons")
-}
-
 // --- ksni service ----------------------------------------------------------
 
 /// The shared mutex our three actors (poll thread, glib tick, ksni
@@ -108,6 +73,7 @@ type SharedState = Arc<Mutex<TrayState>>;
 
 struct BucklandTray {
     state: SharedState,
+    pixmaps: Arc<StatePixmaps>,
 }
 
 #[cfg(feature = "tray")]
@@ -117,33 +83,61 @@ impl ksni::Tray for BucklandTray {
     }
 
     fn title(&self) -> String {
-        "Buckland".into()
+        let s = self.state.lock().expect("tray state poisoned");
+        tooltip(&s, Local::now())
     }
 
-    fn icon_name(&self) -> String {
+    // No `icon_name` impl: the default returns an empty string. We ship
+    // only `icon_pixmap` so St.Icon on GNOME can't apply its symbolic
+    // recoloring (which collapses any monochrome SVG to the panel's CSS
+    // color and makes our idle icon invisible).
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let s = self.state.lock().expect("tray state poisoned");
-        icon_name(&s).to_string()
+        match &*s {
+            TrayState::Idle | TrayState::NoDatabase => self.pixmaps.idle.clone(),
+            TrayState::Active(_) => self.pixmaps.running.clone(),
+            TrayState::Error(_) => self.pixmaps.error.clone(),
+        }
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
         let s = self.state.lock().expect("tray state poisoned");
         let title = tooltip(&s, Local::now());
         ksni::ToolTip {
-            icon_name: icon_name(&s).to_string(),
+            icon_name: String::new(),
             icon_pixmap: vec![],
             title,
             description: String::new(),
         }
     }
 
+    /// Menu layout:
+    /// `[ <state line, disabled> | --- | Quit ]`
+    ///
+    /// GNOME's `ubuntu-appindicators` doesn't render `Title` or `ToolTip`
+    /// on hover, so we surface the live state as the first menu item.
+    /// `enabled = false` greys it out — it's a label, not a command.
+    /// The 1Hz tick triggers `Handle::update`, which re-emits the menu
+    /// and the elapsed clock advances visibly when the user opens it.
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
-        vec![StandardItem {
-            label: "Quit".into(),
-            activate: Box::new(|_: &mut Self| std::process::exit(0)),
-            ..Default::default()
-        }
-        .into()]
+        let s = self.state.lock().expect("tray state poisoned");
+        let state_label = tooltip(&s, Local::now());
+        vec![
+            StandardItem {
+                label: state_label,
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+            ksni::MenuItem::Separator,
+            StandardItem {
+                label: "Quit".into(),
+                activate: Box::new(|_: &mut Self| std::process::exit(0)),
+                ..Default::default()
+            }
+            .into(),
+        ]
     }
 }
 
@@ -157,14 +151,12 @@ impl ksni::Tray for BucklandTray {
 pub fn run(config: TrayRuntimeConfig) -> anyhow::Result<()> {
     use ksni::blocking::TrayMethods;
 
-    // Best-effort: install the icons. If this fails (read-only home,
-    // for instance), the host falls back to its default icon — not
-    // worth aborting startup.
-    let _ = install_theme_icons_at(&data_icons_dir());
+    let pixmaps = Arc::new(render_state_icons().context("rasterizing tray SVG icons")?);
 
     let state: SharedState = Arc::new(Mutex::new(TrayState::Idle));
     let tray = BucklandTray {
         state: Arc::clone(&state),
+        pixmaps,
     };
     let handle = tray
         .spawn()
@@ -224,7 +216,6 @@ mod tests {
     use crate::domain::ActiveSnapshot;
     use crate::storage::repo::RepoError;
     use chrono::{TimeZone, Utc};
-    use tempfile::TempDir;
 
     fn snap(id: i64, started_h: u32) -> ActiveSnapshot {
         ActiveSnapshot {
@@ -233,45 +224,6 @@ mod tests {
             sc_external_id: None,
             started_at: Utc.with_ymd_and_hms(2026, 4, 22, started_h, 0, 0).unwrap(),
         }
-    }
-
-    #[test]
-    fn install_theme_icons_writes_three_svg_files_into_target_dir() {
-        let dir = TempDir::new().unwrap();
-        install_theme_icons_at(dir.path()).unwrap();
-        let apps = dir.path().join("hicolor/scalable/apps");
-        assert!(apps.join("buckland-tray-idle.svg").exists());
-        assert!(apps.join("buckland-tray-running.svg").exists());
-        assert!(apps.join("buckland-tray-error.svg").exists());
-    }
-
-    #[test]
-    fn install_theme_icons_is_idempotent_when_bytes_match() {
-        let dir = TempDir::new().unwrap();
-        install_theme_icons_at(dir.path()).unwrap();
-        let path = dir
-            .path()
-            .join("hicolor/scalable/apps/buckland-tray-idle.svg");
-        let mtime1 = std::fs::metadata(&path).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        // Second call: bytes are identical, file mtime should not change.
-        install_theme_icons_at(dir.path()).unwrap();
-        let mtime2 = std::fs::metadata(&path).unwrap().modified().unwrap();
-        assert_eq!(
-            mtime1, mtime2,
-            "idempotent install must not rewrite when bytes match"
-        );
-    }
-
-    #[test]
-    fn install_theme_icons_overwrites_when_existing_bytes_differ() {
-        let dir = TempDir::new().unwrap();
-        let apps = dir.path().join("hicolor/scalable/apps");
-        std::fs::create_dir_all(&apps).unwrap();
-        std::fs::write(apps.join("buckland-tray-idle.svg"), b"<svg>old</svg>").unwrap();
-        install_theme_icons_at(dir.path()).unwrap();
-        let written = std::fs::read(apps.join("buckland-tray-idle.svg")).unwrap();
-        assert_eq!(written, crate::tray::assets::TRAY_IDLE_SVG);
     }
 
     #[test]
@@ -316,6 +268,6 @@ mod tests {
     #[test]
     fn tray_runtime_config_has_sensible_default_poll_seconds() {
         let cfg = TrayRuntimeConfig::for_path(std::path::PathBuf::from("/tmp/x"));
-        assert_eq!(cfg.poll_seconds, 30);
+        assert_eq!(cfg.poll_seconds, 2);
     }
 }
