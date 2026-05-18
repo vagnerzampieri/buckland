@@ -6,13 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-05-10
+## [0.5.0] - 2026-05-17
 
 ### Added
 - `bl-tray` binary: passive StatusNotifierItem tray icon (ksni) with idle
-  / running / error states, 1Hz tooltip tick (glib), and a one-item Quit
-  menu. Polls the SQLite file in read-only mode every
-  `tray.poll_seconds` (default 30s).
+  / running / error states. Icons are rasterized (resvg) and shipped as
+  ARGB32 pixmaps via SNI's `IconPixmap` — bypassing the icon-theme path
+  so GNOME's `St.Icon` can't recolor monochrome SVGs as symbolic masks.
+  The right-click menu has a disabled state line (`#N task — HH:MM:SS`)
+  above a separator and Quit, and the same string is also published as
+  `Title` / `ToolTip` for hosts that surface those (KDE Plasma).
+  Polls the SQLite file in read-only mode every `tray.poll_seconds`
+  (default 2s) and ticks the menu at 1Hz so the elapsed clock advances
+  between polls.
 - `bl tray` subcommand — same loop as `bl-tray`, exposed through the
   main binary so users on `cargo install buckland` always have the tray
   reachable from one entry point.
@@ -34,6 +40,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tooltip.
 - New `SqliteRepo::open_read_only` constructor wraps
   `OpenFlags::SQLITE_OPEN_READ_ONLY`.
+- New `tray::render` module rasterizes the embedded SVGs once at startup
+  to 16/22/32/48 px ARGB32 buffers (resvg + tiny_skia). Adds `resvg`
+  dependency, gated behind the `tray` feature.
+- Removed the `icon_name`-based pipeline: `state::icon_name`,
+  `ICON_NAME_*` constants, `APP_ICON_SVG`, and the
+  `install_theme_icons_at` helper. Hosts now receive raw bytes only.
 
 ## [0.4.0] - 2026-04-28
 

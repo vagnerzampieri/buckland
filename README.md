@@ -4,7 +4,7 @@ Keyboard-first time tracker for developers who use Shortcut. All-Rust, local SQL
 
 ## Status
 
-**Phases A, B, C, and D shipped** — `bl` is a usable CLI time tracker with read-only Shortcut integration, reports against a local SQLite file, and a ratatui-based TUI. The tray binary is on the roadmap.
+**Phases A through E shipped** — `bl` is a usable CLI time tracker with read-only Shortcut integration, reports against a local SQLite file, a ratatui-based TUI, and a passive StatusNotifierItem tray icon (`bl-tray` / `bl tray`) that surfaces the active timer in the panel.
 
 See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown and [docs/superpowers/specs/2026-04-22-buckland-design.md](docs/superpowers/specs/2026-04-22-buckland-design.md) for the design spec.
 
@@ -17,13 +17,13 @@ See [docs/superpowers/plans/](docs/superpowers/plans/) for the phase breakdown a
 - Single-active-timer invariant enforced both in the schema (partial unique index) and in a transaction (`TimerOps::start` stops and starts atomically).
 - Hard delete is blocked for tasks that have time entries — the CLI suggests `archive` instead, so history is preserved by default.
 - Data lives in one SQLite file; no daemon, no HTTP surface.
-- 154 unit + integration tests, `clippy -D warnings` clean, rustfmt clean.
+- Tray icon (`bl-tray`) with idle / running / error states, dynamic state line in the right-click menu, and a 1Hz tick that advances the elapsed clock between polls. Ships icons as ARGB32 pixmaps so monochrome SVGs don't get symbolic-dimmed by GNOME's panel.
+- 284 unit + integration tests, `clippy -D warnings` clean, rustfmt clean.
 
 ## Coming next
 
 | Phase | Delivers |
 |-------|----------|
-| E | `bl-tray` StatusNotifierItem icon with a local 1 Hz clock tick. |
 | F | CI, `cargo deb`, release workflow, crates.io publish. |
 
 ## Requirements
@@ -167,7 +167,7 @@ icons = "unicode"               # or "ascii"
 accent_color = "cyan"
 
 [tray]
-poll_seconds = 30               # how often the tray polls the SQLite file
+poll_seconds = 2                # how often the tray polls the SQLite file
 ```
 
 ## Development
